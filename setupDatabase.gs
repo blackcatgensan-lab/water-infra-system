@@ -13,9 +13,7 @@
  *   4. 初回実行時にスプレッドシートへのアクセス許可を求められるので承認
  */
 
-// ============================================================
-// メイン関数
-// ============================================================
+const SPREADSHEET_ID = '17xlItfPEhkzZj-rG8A_RBkaDscl_pWu24tr61-5knZ8';
 
 function setupDatabase() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -24,7 +22,8 @@ function setupDatabase() {
   // --- マスタテーブル (青系ヘッダー) ---
   createMFacilities(ss);
   createMEquipment(ss);
-  createMInspectionRoutes(ss);
+  createMInspectionGroups(ss); // [NEW] parent
+  createMInspectionItems(ss);  // [NEW] child
   createMItems(ss);
   createMStaff(ss);
   
@@ -191,48 +190,101 @@ function createMFacilities(ss) {
 
 /**
  * 2.1 M_Equipment (設備マスタ - THE HUB)
+ * [UPDATE] CSVデータ構造に合わせてスキーマ拡張
+ *   - System_Category (CSVの大分類) を追加
+ *   - Status に '設置' を追加
+ *   - Maintenance_Type にプルダウンを設定
  */
 function createMEquipment(ss) {
   var headers = [
-    'Equipment_ID',
-    'Facility_ID',
-    'Name',
-    'Type',
-    'Status',
-    'Installation_Date',
-    'QR_Code'
+    'Equipment_ID',         // 1
+    'Facility_ID',          // 2
+    'Name',                 // 3
+    'Type',                 // 4  (機械/電気/計装/管路 - マッピング用)
+    'Status',               // 5
+    'Building',             // 6
+    'Floor',                // 7
+    'Room',                 // 8
+    'System_Category',      // 9  [NEW] CSVの大分類 (施設系の詳細分類)
+    'Category_Major',       // 10
+    'Category_Middle',      // 11
+    'Category_Minor',       // 12
+    'Model_Number',         // 13
+    'Serial_Number',        // 14
+    'Spec_1',               // 15
+    'Spec_2',               // 16
+    'Spec_3',               // 17
+    'Installation_Date',    // 18
+    'Operation_Start_Date', // 19
+    'Legal_Lifespan',       // 20
+    'Standard_Lifespan',    // 21
+    'Manufacturer',         // 22
+    'Contractor',           // 23
+    'Asset_No',             // 24
+    'Maintenance_Type',     // 25
+    'QR_Code'               // 26
   ];
-  var widths = [130, 120, 220, 100, 100, 140, 150];
+  var widths = [130, 120, 220, 100, 100, 100, 80, 100, 200, 120, 120, 120, 150, 150, 150, 150, 150, 130, 130, 100, 100, 180, 180, 150, 130, 150];
   
   var sheet = createSheet_(ss, 'M_Equipment', headers, MASTER_COLOR, widths);
   
-  // データ検証: Type
+  // データ検証: Type (マッピング用の簡易分類)
   setDropdown_(sheet, 4, ['機械', '電気', '計装', '管路']);
   
-  // データ検証: Status
-  setDropdown_(sheet, 5, ['稼働中', '停止中', '故障中', '廃棄']);
+  // データ検証: Status [UPDATE] CSVに存在する '設置' を追加
+  setDropdown_(sheet, 5, ['稼働中', '停止中', '故障中', '廃棄', '設置']);
   
-  // 日付形式: Installation_Date
-  setDateFormat_(sheet, 6);
+  // データ検証: Maintenance_Type [NEW] CSVの保全区分
+  setDropdown_(sheet, 25, ['事後保全', '時間監視', '状態監視']);
+  
+  // 日付形式: Installation_Date (列18)
+  setDateFormat_(sheet, 18);
   
   Logger.log('✅ M_Equipment (HUB) 作成完了');
   return sheet;
 }
 
 /**
- * 2.2 M_Inspection_Routes (点検ルート定義)
+ * 2.2 M_Inspection_Groups (点検グループマスタ - 親) [NEW]
  */
-function createMInspectionRoutes(ss) {
+function createMInspectionGroups(ss) {
   var headers = [
-    'Route_ID',
+    'Group_ID',
+    'Work_Group',
     'Route_Name',
-    'Target_Equipment_List'
+    'Area_Name',
+    'Equipment_ID', // M_Equipment との紐付け
+    'Sort_Order'
   ];
-  var widths = [120, 220, 400];
+  var widths = [120, 150, 150, 150, 130, 80];
+  var sheet = createSheet_(ss, 'M_Inspection_Groups', headers, MASTER_COLOR, widths);
+  Logger.log('✅ M_Inspection_Groups 作成完了');
+  return sheet;
+}
+
+/**
+ * 2.2 M_Inspection_Items (点検項目マスタ - 子) [NEW]
+ */
+function createMInspectionItems(ss) {
+  var headers = [
+    'Item_ID',
+    'Group_ID', // M_Inspection_Groups との紐付け
+    'Task_Name',
+    'Description',
+    'Type',
+    'Unit',
+    'Upper_Limit',
+    'Lower_Limit',
+    'Instructions',
+    'Sort_Order'
+  ];
+  var widths = [120, 120, 200, 250, 100, 80, 100, 100, 250, 80];
+  var sheet = createSheet_(ss, 'M_Inspection_Items', headers, MASTER_COLOR, widths);
   
-  var sheet = createSheet_(ss, 'M_Inspection_Routes', headers, MASTER_COLOR, widths);
+  // データ検証: Type
+  setDropdown_(sheet, 5, ['数値入力', 'OK/NG選択', '写真のみ', 'テキスト']);
   
-  Logger.log('✅ M_Inspection_Routes 作成完了');
+  Logger.log('✅ M_Inspection_Items 作成完了');
   return sheet;
 }
 

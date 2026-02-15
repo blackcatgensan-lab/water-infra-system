@@ -18,16 +18,16 @@
 // ============================================================
 
 /**
- * ★ スプレッドシート内の「拡張機能 > Apps Script」で実行する場合は空でOK（自動取得）
- * 別のプロジェクトから実行する場合のみIDを貼り付けてください
+ * ★ スプレッドシートの ID (setupDatabase.gs にて定義されています)
  */
-var SPREADSHEET_ID = '';
+// var SPREADSHEET_ID は setupDatabase.gs で定義
 
 // シート名定数
 var SHEET = {
   FACILITIES:          'M_Facilities',
   EQUIPMENT:           'M_Equipment',
-  INSPECTION_ROUTES:   'M_Inspection_Routes',
+  INSPECTION_GROUPS:   'M_Inspection_Groups',
+  INSPECTION_ITEMS:     'M_Inspection_Items',
   INSPECTION_RESULTS:  'T_Inspection_Results',
   CONSTRUCTION:        'T_Construction_History',
   ITEMS:               'M_Items',
@@ -45,8 +45,10 @@ var SHEET = {
 var ID_PREFIX = {
   'M_Facilities':           { column: 'Facility_ID',      prefix: 'F',   digits: 3 },
   'M_Equipment':            { column: 'Equipment_ID',     prefix: 'E',   digits: 3 },
+  'M_Inspection_Groups':    { column: 'Group_ID',         prefix: 'GRP', digits: 4 },
+  'M_Inspection_Items':     { column: 'Item_ID',          prefix: 'ITM', digits: 5 },
   'M_Organizations':        { column: 'Org_ID',           prefix: 'ORG', digits: 3 },
-  'M_Items':                { column: 'Item_ID',          prefix: 'ITM', digits: 3 },
+  'M_Items':                { column: 'Item_ID',          prefix: 'ITEM', digits: 3 },
   'M_Qualifications':       { column: 'Qual_ID',          prefix: 'Q',   digits: 3 },
   'T_Qual_Applications':    { column: 'App_ID',           prefix: 'A',   digits: 3 },
   'T_Staff_Changes':        { column: 'Change_ID',        prefix: 'CHG', digits: 3 },
