@@ -38,3 +38,6 @@ build/
 *.gdoc
 *.gdraw
 *.gtable
+
+# Local Data
+raw_data/
