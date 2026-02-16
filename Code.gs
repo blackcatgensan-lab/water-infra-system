@@ -33,6 +33,8 @@ var SHEET = {
   ITEMS:               'M_Items',
   INVENTORY_LOGS:      'T_Inventory_Logs',
   STAFF:               'M_Staff',
+  INSPECTION_ROUTES:   'M_Inspection_Routes',
+  ROUTE_DETAILS:       'M_Route_Details', // [NEW] v2
   // [NEW] Phase 5
   ORGANIZATIONS:       'M_Organizations',
   CONTRACTS:           'M_Contracts',
@@ -47,6 +49,8 @@ var ID_PREFIX = {
   'M_Equipment':            { column: 'Equipment_ID',     prefix: 'E',   digits: 3 },
   'M_Inspection_Groups':    { column: 'Group_ID',         prefix: 'GRP', digits: 4 },
   'M_Inspection_Items':     { column: 'Item_ID',          prefix: 'ITM', digits: 5 },
+  'M_Inspection_Routes':    { column: 'Route_ID',         prefix: 'R',   digits: 3 },
+  'M_Route_Details':        { column: 'Route_Detail_ID',  prefix: 'RD',  digits: 5 },
   'M_Organizations':        { column: 'Org_ID',           prefix: 'ORG', digits: 3 },
   'M_Items':                { column: 'Item_ID',          prefix: 'ITEM', digits: 3 },
   'M_Qualifications':       { column: 'Qual_ID',          prefix: 'Q',   digits: 3 },
@@ -291,8 +295,18 @@ function getInitialData() {
     contracts:          getSheetDataCached_(SHEET.CONTRACTS),
     qualifications:     getSheetDataCached_(SHEET.QUALIFICATIONS),
     qualApplications:   getSheetDataCached_(SHEET.QUAL_APPLICATIONS),
-    staffChanges:       getSheetDataCached_(SHEET.STAFF_CHANGES)
+    staffChanges:       getSheetDataCached_(SHEET.STAFF_CHANGES),
+    routeDetails:       getSheetDataCached_(SHEET.ROUTE_DETAILS) // [NEW] v2
   };
+}
+
+/**
+ * デバッグ用: 生成されたER図テキストをログに出力する
+ */
+function debugGetERText() {
+  var text = getSchemaDiagram();
+  Logger.log(text);
+  return text;
 }
 
 function clearCache_(sheetName) {
@@ -605,4 +619,108 @@ function applyStaffChange(changeData) {
     console.error('applyStaffChange error:', e);
     return { success: false, error: e.toString() };
   }
+}
+// ============================================================
+// システム可視化・ER図生成 API
+// ============================================================
+
+/**
+ * 全シートのヘッダー情報を読み込み、Mermaid形式のER図テキストを生成する
+ */
+/**
+ * 全シートのヘッダー情報を読み込み、Mermaid形式のER図テキストを生成する (v3: 堅牢版)
+ */
+function getSchemaDiagram() {
+  var ss = getSpreadsheet_();
+  if (!ss) return 'erDiagram\n  ERROR_NO_SS';
+  
+  var sheets = ss.getSheets();
+  var erText = 'erDiagram\n';
+  var schemaMap = {};
+  var tablePKs = {};
+  
+  // 1. 各シート定義 & カラム収集
+  sheets.forEach(function(sheet) {
+    var name = sheet.getName();
+    if (!name.match(/^[MT]_/)) return;
+    
+    // 英数字とアンダースコアのみに制限
+    var safeName = name.replace(/[^a-zA-Z0-9_]/g, '');
+    if (!safeName) return;
+
+    var lastCol = sheet.getLastColumn();
+    var headers = [];
+    if (sheet.getLastRow() > 0 && lastCol > 0) {
+      headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    }
+    
+    // 重複除去と空文字排除
+    var cleanHeaders = [];
+    var seenH = {};
+    headers.forEach(function(h) {
+      if (h === "" || h === null || h === undefined) return;
+      var hStr = String(h).trim();
+      if (!seenH[hStr]) {
+        cleanHeaders.push(hStr);
+        seenH[hStr] = true;
+      }
+    });
+
+    schemaMap[safeName] = cleanHeaders;
+    
+    // テーブル定義出力
+    erText += '  ' + safeName + ' {\n';
+    cleanHeaders.forEach(function(h) {
+      var isPK = false;
+      var isFK = false;
+      
+      // PK推論
+      if (h.match(/_ID$/i)) {
+        var base = safeName.replace(/^[MT]_/, '').replace(/s$/, '').toLowerCase();
+        var hLower = h.toLowerCase();
+        if (hLower.indexOf(base) !== -1 || hLower === 'id') {
+          isPK = true;
+          tablePKs[safeName] = h; // このテーブルのPKとして記録
+        } else {
+          isFK = true;
+        }
+      }
+      
+      var type = 'string';
+      if (h.match(/Date|Time|Timestamp/i)) type = 'date';
+      if (h.match(/Count|Amount|Cost|Stock|Order|Quantity/i)) type = 'number';
+      
+      var keyMark = isPK ? ' PK' : (isFK ? ' FK' : '');
+      // カラム名に英数字以外が含まれる場合は引用符が必要だが、
+      // Mermaid erDiagramでは型定義内での引用符の扱いに癖があるため、極力記号を外す
+      var saferH = h.replace(/[^a-zA-Z0-9_]/g, '');
+      if (!saerH) saferH = 'col';
+      
+      erText += '    ' + type + ' ' + saferH + keyMark + '\n';
+    });
+    erText += '  }\n';
+  });
+  
+  // 2. リレーション推論
+  var drawnRels = {};
+  Object.keys(schemaMap).forEach(function(src) {
+    schemaMap[src].forEach(function(col) {
+      if (!col.match(/_ID$/i)) return;
+      
+      Object.keys(tablePKs).forEach(function(tgt) {
+        if (src === tgt) return;
+        if (col.toLowerCase() === tablePKs[tgt].toLowerCase()) {
+          var relKey = [src, tgt].sort().join('-');
+          if (!drawnRels[relKey]) {
+            // 線を引く ( src は FK を持つ側 -> 子 )
+            // tgt(親) ||--o{ src(子)
+            erText += '  ' + tgt + ' ||--o{ ' + src + ' : "via_' + col.replace(/[^a-zA-Z0-9_]/g, '') + '"\n';
+            drawnRels[relKey] = true;
+          }
+        }
+      });
+    });
+  });
+
+  return erText;
 }

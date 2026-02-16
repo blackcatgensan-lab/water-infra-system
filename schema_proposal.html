@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>点検ルート構造再設計提案書</title>
+    <style>
+        body {
+            font-family: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", "Hiragino Sans", Meiryo, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 40px;
+        }
+
+        h1 {
+            border-bottom: 2px solid #1565C0;
+            padding-bottom: 10px;
+            color: #1565C0;
+        }
+
+        h2 {
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 5px;
+            margin-top: 30px;
+            color: #0D47A1;
+        }
+
+        h3 {
+            margin-top: 25px;
+            color: #1E88E5;
+        }
+
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 20px 0;
+        }
+
+        th,
+        td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+        }
+
+        th {
+            background-color: #f2f2f2;
+            font-weight: bold;
+        }
+
+        code {
+            background-color: #f5f5f5;
+            padding: 2px 5px;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+
+        pre {
+            background-color: #f5f5f5;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+
+        .mermaid {
+            text-align: center;
+            margin: 20px 0;
+        }
+
+        @media print {
+            body {
+                padding: 0;
+            }
+
+            .no-print {
+                display: none;
+            }
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+    <script>
+        document.addEventListener("DOMContentLoaded", function () {
+            mermaid.initialize({ startOnLoad: true });
+        });
+    </script>
+</head>
+
+<body>
+    <div class="no-print"
+        style="background: #e3f2fd; padding: 10px; margin-bottom: 20px; border-radius: 5px; text-align: center;">
+        <strong>印刷方法:</strong> ブラウザのメニューから「印刷」(Ctrl+P / Cmd+P) を選択し、「PDFとして保存」を選んでください。
+    </div>
+
+    <h1>点検ルート構造再設計提案書</h1>
+
+    <h2>現状の課題</h2>
+    <p>現在、<code>M_Inspection_Routes</code> テーブルでは、点検対象の設備をカンマ区切りの文字列（例: <code>"E-001,E-002,E-005"</code>）として
+        <code>Equipment_IDs</code> カラムに保持しています。</p>
+    <ul>
+        <li><strong>メリット</strong>: 構造が単純で、1セルで完結する。</li>
+        <li><strong>デメリット</strong>:
+            <ul>
+                <li>点検順序（ルート順）の厳密な管理が難しい。</li>
+                <li>「設備Xを含むルートはどれか？」というクエリが複雑になる（部分一致検索が必要）。</li>
+                <li>ルートが非常に長くなった場合、文字数制限に引っかかる可能性がある。</li>
+                <li>「このルートのこの設備では特にここを見る」といった設備ごとの個別指示(メタデータ)を持てない。</li>
+            </ul>
+        </li>
+    </ul>
+
+    <h2>提案スキーマ</h2>
+    <p>この構造を正規化し、<strong>ヘッダー (基本情報)</strong> と <strong>明細 (詳細情報)</strong> の2つのテーブルに分割することを提案します。</p>
+
+    <h3>1. M_Inspection_Routes (ヘッダー)</h3>
+    <p>ルート自体の属性情報のみを管理します。</p>
+    <table>
+        <thead>
+            <tr>
+                <th>カラム名</th>
+                <th>型</th>
+                <th>説明</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>Route_ID</strong></td>
+                <td>PK</td>
+                <td>例: <code>R-001</code></td>
+            </tr>
+            <tr>
+                <td><strong>Name</strong></td>
+                <td>String</td>
+                <td>ルート名称 (例: "浄水場A棟 - 日次点検")</td>
+            </tr>
+            <tr>
+                <td><strong>Description</strong></td>
+                <td>String</td>
+                <td>ルートの説明</td>
+            </tr>
+            <tr>
+                <td><strong>Target_Area</strong></td>
+                <td>String</td>
+                <td>対象エリア名 (例: "東棟")</td>
+            </tr>
+            <tr>
+                <td><strong>Estimated_Time</strong></td>
+                <td>Number</td>
+                <td>想定所要時間 (分)</td>
+            </tr>
+            <tr>
+                <td><strong>Is_Active</strong></td>
+                <td>Boolean</td>
+                <td>有効状態</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h3>2. M_Route_Details (明細) [新規]</h3>
+    <p>ルートと設備を紐付け、順序や個別指示を管理します。</p>
+    <table>
+        <thead>
+            <tr>
+                <th>カラム名</th>
+                <th>型</th>
+                <th>説明</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>Route_Detail_ID</strong></td>
+                <td>PK</td>
+                <td>例: <code>RD-0001</code></td>
+            </tr>
+            <tr>
+                <td><strong>Route_ID</strong></td>
+                <td>FK</td>
+                <td><code>M_Inspection_Routes</code> へのリンク</td>
+            </tr>
+            <tr>
+                <td><strong>Equipment_ID</strong></td>
+                <td>FK</td>
+                <td><code>M_Equipment</code> へのリンク</td>
+            </tr>
+            <tr>
+                <td><strong>Order</strong></td>
+                <td>Number</td>
+                <td>点検順序 (1, 2, 3...)</td>
+            </tr>
+            <tr>
+                <td><strong>Instructions</strong></td>
+                <td>String</td>
+                <td>このルートにおける当該設備の点検指示 (任意)</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h2>ER図への影響</h2>
+
+    <h3>変更前 (Before)</h3>
+    <pre class="mermaid">
+    erDiagram
+      M_Inspection_Routes {
+        string Route_ID
+        string Equipment_IDs
+      }
+    </pre>
+
+    <h3>変更後 (After)</h3>
+    <pre class="mermaid">
+    erDiagram
+      M_Inspection_Routes ||--|{ M_Route_Details : "has_steps"
+      M_Route_Details }|..|| M_Equipment : "targets"
+      
+      M_Inspection_Routes {
+        string Route_ID PK
+        string Name
+      }
+      
+      M_Route_Details {
+        string Route_Detail_ID PK
+        string Route_ID FK
+        string Equipment_ID FK
+        number Order
+      }
+    </pre>
+
+    <h2>移行戦略</h2>
+    <ol>
+        <li>スプレッドシートに新しい <code>M_Route_Details</code> シートを作成する。</li>
+        <li>ワンタイム移行スクリプトを作成・実行する:
+            <ul>
+                <li>既存の <code>M_Inspection_Routes</code> を読み込む。</li>
+                <li><code>Equipment_IDs</code> をカンマで分割する。</li>
+                <li>順序 (Order) を付与しながら <code>M_Route_Details</code> に行を追加挿入する。</li>
+            </ul>
+        </li>
+        <li>AppSheet および Webアプリの参照先を <code>M_Route_Details</code> に変更する。</li>
+    </ol>
+
+    <h2>導入メリット</h2>
+    <ul>
+        <li><strong>拡張性</strong>: 1ルートあたりの設備数制限が事実上なくなる。</li>
+        <li><strong>柔軟性</strong>: 順序の入れ替えが容易になる（Order番号の変更のみ）。</li>
+        <li><strong>整合性</strong>: 存在しない設備IDが登録されるリスクを低減できる（FK制約的な運用）。</li>
+    </ul>
+
+</body>
+
+</html>

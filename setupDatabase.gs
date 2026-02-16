@@ -476,7 +476,7 @@ function createMOrganizations(ss) {
   var headers = ['Org_ID', 'Name', 'Type', 'Parent_Org_ID', 'Sort_Order', 'Is_Active', 'Org_Code'];
   var widths = [100, 200, 120, 100, 80, 80, 100];
   var sheet = createSheet_(ss, 'M_Organizations', headers, MASTER_COLOR, widths);
-  setDropdown_(sheet, 3, ['事業部', '事業所', '課', '係']);
+  setDropdown_(sheet, 3, ['部', '事業部', '事業所', '課', '係']);
   Logger.log('✅ M_Organizations 作成完了');
   return sheet;
 }

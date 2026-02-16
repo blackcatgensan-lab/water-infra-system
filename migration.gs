@@ -12,6 +12,8 @@ const DATA_FOLDER_ID = 'ここにフォルダIDを入力してください';
 
 // グローバル変数: 施設名 -> 施設ID のマッピングを保持
 let GLOBAL_FACILITY_MAP = {};
+// グローバル変数: 組織パス -> 組織ID のマッピングを保持 [NEW]
+let GLOBAL_ORG_MAP = {};
 
 /**
  * メイン移行関数
@@ -23,8 +25,8 @@ function runDataMigration() {
 
   const folder = DriveApp.getFolderById(DATA_FOLDER_ID);
   
-  // 1. 組織情報の移行 (Org_ID: O-001...)
-  migrateCSVToSheet(folder, '取り扱いデータ - 組織.csv', 'M_Organizations', mapOrganizationData);
+  // 1. 組織情報の移行 (Org_ID: O-001...) 階層構造対応
+  migrateOrganizationsHierarchy(folder, '取り扱いデータ - 組織.csv');
   
   // 2. 施設情報の移行 (Facility_ID: F-001...)
   // ※ここで GLOBAL_FACILITY_MAP を構築する
@@ -149,35 +151,83 @@ function migrateInspectionData(folder, fileName) {
 }
 
 /**
- * 組織データのマッピング
- * Output: [0]Org_ID, [1]Name, [2]Type, ...
+ * 組織情報の階層的移行 (部 -> 事業所 -> 課)
+ * 引数なしで直接実行しても動作するように調整しました。
  */
-function mapOrganizationData(row, headers, index) {
-  // Name, Type の決定
-  let name = row[2]; // 課
-  let type = '課';
-  
-  if (!name) {
-    name = row[1]; // 事業所
-    type = '事業所';
+function migrateOrganizationsHierarchy(folder, fileName) {
+  // 直接実行された場合（引数が未定義の場合）のフォールバック
+  if (!folder) {
+    if (DATA_FOLDER_ID === 'ここにフォルダIDを入力してください') {
+      throw new Error('DATA_FOLDER_ID を設定してください（migration.gs の11行目）。');
+    }
+    folder = DriveApp.getFolderById(DATA_FOLDER_ID);
   }
-  if (!name) {
-    name = row[0]; // 事業部
-    type = '事業部';
+  if (!fileName) fileName = '取り扱いデータ - 組織.csv';
+
+  const file = getFileByName_(folder, fileName);
+  if (!file) {
+    Logger.log(`エラー: ${fileName} が見つかりませんでした。`);
+    return;
   }
-  
-  // Org_ID: O-001, O-002...
-  const orgId = 'O-' + ('000' + index).slice(-3);
-  
-  return [
-    orgId,               // Org_ID
-    name,                // Name
-    type,                // Type
-    "",                  // Parent_Org_ID (空欄)
-    index * 10,          // Sort_Order
-    '有効',              // Is_Active
-    ""                   // Org_Code
-  ];
+
+  const csvData = readCsvAsTable_(file);
+  if (csvData.length <= 1) return;
+
+  const rows = csvData.slice(1);
+  const orgs = [];
+  // GLOBAL_ORG_MAP を使用
+  let idCounter = 1;
+
+  function getNextId() {
+    return 'O-' + ('000' + idCounter++).slice(-3);
+  }
+
+  rows.forEach(row => {
+    const bu = row[0] ? row[0].trim() : '';
+    const sho = row[1] ? row[1].trim() : '';
+    const ka = row[2] ? row[2].trim() : '';
+
+    // Level 1: 部
+    if (bu && !GLOBAL_ORG_MAP[bu]) {
+      const id = getNextId();
+      GLOBAL_ORG_MAP[bu] = id;
+      orgs.push([id, bu, '部', '', idCounter * 10, '有効', '']);
+    }
+
+    // Level 2: 事業所
+    if (sho) {
+      const buId = GLOBAL_ORG_MAP[bu];
+      const shoPath = bu + '>' + sho;
+      if (!GLOBAL_ORG_MAP[shoPath]) {
+        const id = getNextId();
+        GLOBAL_ORG_MAP[shoPath] = id;
+        orgs.push([id, sho, '事業所', buId, idCounter * 10, '有効', '']);
+      }
+    }
+
+    // Level 3: 課
+    if (ka) {
+      const buId = GLOBAL_ORG_MAP[bu];
+      const shoPath = bu + '>' + sho;
+      const shoId = GLOBAL_ORG_MAP[shoPath];
+      const kaPath = bu + '>' + sho + '>' + ka;
+      if (!GLOBAL_ORG_MAP[kaPath]) {
+        const id = getNextId();
+        GLOBAL_ORG_MAP[kaPath] = id;
+        orgs.push([id, ka, '課', shoId, idCounter * 10, '有効', '']);
+      }
+    }
+  });
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName('M_Organizations');
+  if (sheet) {
+    // [FIX] 入力規則を更新（「部」を追加）
+    setDropdown_(sheet, 3, ['部', '事業部', '事業所', '課', '係']);
+  }
+
+  updateSheetData_(ss, 'M_Organizations', orgs);
+  Logger.log(`✅ ${fileName} の階層化移行が完了しました。 (Total Orgs: ${orgs.length})`);
 }
 
 /**
@@ -338,4 +388,16 @@ function updateSheetData_(ss, sheetName, data) {
   if (data.length > 0) {
     sheet.getRange(2, 1, data.length, data[0].length).setValues(data);
   }
+}
+
+/**
+ * 共通ヘルパー: 指定した列にドロップダウン（入力規則）を設定
+ */
+function setDropdown_(sheet, colIndex, values) {
+  var range = sheet.getRange(2, colIndex, sheet.getMaxRows() - 1, 1);
+  var rule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(values, true)
+    .setAllowInvalid(false) // 違反データの入力を拒否
+    .build();
+  range.setDataValidation(rule);
 }

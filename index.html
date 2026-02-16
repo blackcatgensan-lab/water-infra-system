@@ -15,6 +15,8 @@
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Outlined" rel="stylesheet">
   <!-- Vue.js 3 CDN -->
   <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <!-- Mermaid.js CDN (System Blueprint) -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
 
   <style>
     /* ============================================================
@@ -1269,6 +1271,10 @@
           <span class="material-icons-outlined">account_tree</span>
           組織管理
         </div>
+        <div class="nav-tab" :class="{active: currentView === 'routes'}" @click="currentView = 'routes'">
+          <span class="material-icons-outlined">route</span>
+          点検ルート管理
+        </div>
       </nav>
     </header>
 
@@ -1576,74 +1582,179 @@
         </div>
 
         <div class="staff-tree-container" style="padding:16px;">
-          <div v-for="group in staffTreeData" :key="group.Org_ID" class="org-group" style="margin-bottom:24px;">
-            <div class="org-header" @click="group._open = !group._open"
-              style="cursor:pointer; display:flex; align-items:center; font-weight:bold; margin-bottom:12px; font-size:16px; color:var(--text-primary);">
-              <span class="material-icons-outlined" :class="{open: group._open}"
-                style="transition:transform 0.2s; margin-right:8px;">chevron_right</span>
-              {{ group.Name }}
-              <span style="font-size:12px; color:var(--text-muted); margin-left:8px; font-weight:normal;">({{
-                group.staff.length }}名)</span>
-            </div>
+          <!-- 再帰的組織ツリー: renderOrgNode -->
+          <template v-for="node in staffTreeData" :key="node.Org_ID">
+            <div class="org-group" :style="{ marginBottom: '8px' }">
+              <!-- 組織ヘッダー（クリックで開閉） -->
+              <div @click="node._open = !node._open"
+                style="cursor:pointer; display:flex; align-items:center; padding:8px 12px; border-radius:8px; transition:background 0.15s;"
+                :style="{ fontWeight: node.Type === '部' || node.Type === '事業部' ? 'bold' : '600',
+                           fontSize: node.Type === '部' || node.Type === '事業部' ? '16px' : node.Type === '事業所' ? '15px' : '14px',
+                           background: node._open ? 'rgba(21,101,192,0.04)' : 'transparent' }">
+                <span class="material-icons-outlined" :class="{open: node._open}"
+                  style="transition:transform 0.2s; margin-right:8px; font-size:18px;">chevron_right</span>
+                <span class="material-icons-outlined" style="font-size:18px; margin-right:6px; color:var(--primary);">
+                  {{ node.Type === '部' || node.Type === '事業部' ? 'corporate_fare' :
+                  node.Type === '事業所' ? 'domain' :
+                  node.Type === '課' ? 'groups' : 'person' }}
+                </span>
+                {{ node.Name }}
+                <span style="font-size:11px; color:var(--text-muted); margin-left:8px; font-weight:normal;"
+                  v-if="node.Type">[{{ node.Type }}]</span>
+                <span style="font-size:11px; color:var(--text-muted); margin-left:4px; font-weight:normal;">
+                  ({{ countAllStaff(node) }}名)
+                </span>
+              </div>
 
-            <div v-show="group._open" class="org-content" style="padding-left:12px;">
-              <!-- Children Orgs -->
-              <div v-if="group.children && group.children.length > 0"
-                style="margin-bottom:16px; padding-left:12px; border-left:2px solid var(--border-light);">
-                <div v-for="child in group.children" :key="child.Org_ID" class="sub-org-group"
-                  style="margin-bottom:16px;">
-                  <div class="sub-org-header" @click="child._open = !child._open"
-                    style="cursor:pointer; display:flex; align-items:center; font-weight:600; margin-bottom:8px; font-size:14px;">
-                    <span class="material-icons-outlined" :class="{open: child._open}"
-                      style="transition:transform 0.2s; margin-right:6px; font-size:18px;">chevron_right</span>
-                    {{ child.Name }}
-                    <span style="font-size:11px; color:var(--text-muted); margin-left:6px; font-weight:normal;">({{
-                      child.staff.length }}名)</span>
-                  </div>
-                  <div v-show="child._open" class="staff-grid"
-                    style="grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap:12px;">
-                    <div class="staff-card" v-for="s in child.staff" :key="s.Email" @click="openStaffModal(s)">
-                      <div class="staff-avatar">{{ s.Name ? s.Name.charAt(0) : '?' }}</div>
-                      <div class="staff-name">{{ s.Name }} <span
-                          style="font-size:11px; font-weight:normal; color:var(--text-muted);">({{
-                          calculateAge(s.Birth_Date) }}歳)</span></div>
-                      <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <span class="staff-role" :class="s.Role">{{ s.Role }}</span>
-                        <button @click.stop="editStaff(s)" class="btn-outline" style="padding:2px 6px; font-size:11px;">
-                          <span class="material-icons-outlined" style="font-size:14px;">edit</span>
-                        </button>
-                      </div>
-                      <div class="staff-email">{{ s.Email }}</div>
-                      <div class="staff-tags" v-if="s.Qualifications">
-                        <span class="skill-tag" v-for="q in parseQualifications(s.Qualifications)" :key="q">{{ q
-                          }}</span>
+              <!-- 展開コンテンツ -->
+              <div v-show="node._open"
+                style="padding-left:20px; border-left:2px solid var(--border-light); margin-left:20px; margin-top:4px;">
+
+                <!-- 子組織を再帰表示 -->
+                <template v-for="child in node.children" :key="child.Org_ID">
+                  <div class="org-group" style="margin-bottom:4px;">
+                    <div @click="child._open = !child._open"
+                      style="cursor:pointer; display:flex; align-items:center; padding:6px 10px; border-radius:6px; transition:background 0.15s;"
+                      :style="{ fontWeight: child.Type === '事業所' ? '600' : '500',
+                                 fontSize: child.Type === '事業所' ? '15px' : '14px',
+                                 background: child._open ? 'rgba(21,101,192,0.04)' : 'transparent' }">
+                      <span class="material-icons-outlined" :class="{open: child._open}"
+                        style="transition:transform 0.2s; margin-right:6px; font-size:16px;">chevron_right</span>
+                      <span class="material-icons-outlined"
+                        style="font-size:16px; margin-right:5px; color:var(--primary-light);">
+                        {{ child.Type === '事業所' ? 'domain' : child.Type === '課' ? 'groups' : 'person' }}
+                      </span>
+                      {{ child.Name }}
+                      <span style="font-size:11px; color:var(--text-muted); margin-left:6px; font-weight:normal;"
+                        v-if="child.Type">[{{ child.Type }}]</span>
+                      <span style="font-size:11px; color:var(--text-muted); margin-left:4px; font-weight:normal;">
+                        ({{ countAllStaff(child) }}名)
+                      </span>
+                    </div>
+
+                    <!-- 子の展開コンテンツ -->
+                    <div v-show="child._open"
+                      style="padding-left:18px; border-left:2px solid var(--border-light); margin-left:18px; margin-top:4px;">
+
+                      <!-- 孫組織 (3階層目: 課/係) -->
+                      <template v-for="grandchild in child.children" :key="grandchild.Org_ID">
+                        <div class="org-group" style="margin-bottom:4px;">
+                          <div @click="grandchild._open = !grandchild._open"
+                            style="cursor:pointer; display:flex; align-items:center; padding:5px 8px; border-radius:6px; font-size:13px; font-weight:500; transition:background 0.15s;"
+                            :style="{ background: grandchild._open ? 'rgba(21,101,192,0.03)' : 'transparent' }">
+                            <span class="material-icons-outlined" :class="{open: grandchild._open}"
+                              style="transition:transform 0.2s; margin-right:5px; font-size:15px;">chevron_right</span>
+                            <span class="material-icons-outlined"
+                              style="font-size:15px; margin-right:4px; color:var(--text-muted);">groups</span>
+                            {{ grandchild.Name }}
+                            <span style="font-size:10px; color:var(--text-muted); margin-left:5px;"
+                              v-if="grandchild.Type">[{{ grandchild.Type }}]</span>
+                            <span style="font-size:10px; color:var(--text-muted); margin-left:4px;">
+                              ({{ countAllStaff(grandchild) }}名)
+                            </span>
+                          </div>
+                          <div v-show="grandchild._open"
+                            style="padding-left:16px; border-left:2px solid var(--border-light); margin-left:16px; margin-top:4px;">
+
+                            <!-- 曾孫組織 (4階層目: 係) -->
+                            <template v-for="ggchild in grandchild.children" :key="ggchild.Org_ID">
+                              <div class="org-group" style="margin-bottom:4px;">
+                                <div @click="ggchild._open = !ggchild._open"
+                                  style="cursor:pointer; display:flex; align-items:center; padding:4px 6px; border-radius:6px; font-size:12px; font-weight:500;">
+                                  <span class="material-icons-outlined" :class="{open: ggchild._open}"
+                                    style="transition:transform 0.2s; margin-right:4px; font-size:14px;">chevron_right</span>
+                                  <span class="material-icons-outlined"
+                                    style="font-size:14px; margin-right:3px; color:var(--text-muted);">person</span>
+                                  {{ ggchild.Name }}
+                                  <span style="font-size:10px; color:var(--text-muted); margin-left:4px;">({{
+                                    ggchild.staff.length }}名)</span>
+                                </div>
+                                <div v-show="ggchild._open"
+                                  style="padding-left:14px; margin-left:14px; margin-top:4px;">
+                                  <div class="staff-grid" v-if="ggchild.staff.length > 0"
+                                    style="grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap:10px; margin-bottom:8px;">
+                                    <div class="staff-card" v-for="s in ggchild.staff" :key="s.Staff_ID"
+                                      @click="openStaffModal(s)">
+                                      <div class="staff-avatar">{{ s.Name ? s.Name.charAt(0) : '?' }}</div>
+                                      <div class="staff-name">{{ s.Name }} <span
+                                          style="font-size:11px; font-weight:normal; color:var(--text-muted);">({{
+                                          calculateAge(s.Birth_Date) }}歳)</span></div>
+                                      <div style="display:flex; justify-content:space-between; align-items:center;">
+                                        <span class="staff-role" :class="s.Role">{{ s.Role }}</span>
+                                        <button @click.stop="editStaff(s)" class="btn-outline"
+                                          style="padding:2px 6px; font-size:11px;"><span class="material-icons-outlined"
+                                            style="font-size:14px;">edit</span></button>
+                                      </div>
+                                      <div class="staff-email">{{ s.Email }}</div>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </template>
+
+                            <!-- 孫の直属スタッフ -->
+                            <div class="staff-grid" v-if="grandchild.staff.length > 0"
+                              style="grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap:10px; margin-bottom:8px;">
+                              <div class="staff-card" v-for="s in grandchild.staff" :key="s.Staff_ID"
+                                @click="openStaffModal(s)">
+                                <div class="staff-avatar">{{ s.Name ? s.Name.charAt(0) : '?' }}</div>
+                                <div class="staff-name">{{ s.Name }} <span
+                                    style="font-size:11px; font-weight:normal; color:var(--text-muted);">({{
+                                    calculateAge(s.Birth_Date) }}歳)</span></div>
+                                <div style="display:flex; justify-content:space-between; align-items:center;">
+                                  <span class="staff-role" :class="s.Role">{{ s.Role }}</span>
+                                  <button @click.stop="editStaff(s)" class="btn-outline"
+                                    style="padding:2px 6px; font-size:11px;"><span class="material-icons-outlined"
+                                      style="font-size:14px;">edit</span></button>
+                                </div>
+                                <div class="staff-email">{{ s.Email }}</div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </template>
+
+                      <!-- 子の直属スタッフ -->
+                      <div class="staff-grid" v-if="child.staff.length > 0"
+                        style="grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap:10px; margin-bottom:8px;">
+                        <div class="staff-card" v-for="s in child.staff" :key="s.Staff_ID" @click="openStaffModal(s)">
+                          <div class="staff-avatar">{{ s.Name ? s.Name.charAt(0) : '?' }}</div>
+                          <div class="staff-name">{{ s.Name }} <span
+                              style="font-size:11px; font-weight:normal; color:var(--text-muted);">({{
+                              calculateAge(s.Birth_Date) }}歳)</span></div>
+                          <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <span class="staff-role" :class="s.Role">{{ s.Role }}</span>
+                            <button @click.stop="editStaff(s)" class="btn-outline"
+                              style="padding:2px 6px; font-size:11px;"><span class="material-icons-outlined"
+                                style="font-size:14px;">edit</span></button>
+                          </div>
+                          <div class="staff-email">{{ s.Email }}</div>
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              </div>
+                </template>
 
-              <!-- Direct Staff -->
-              <div class="staff-grid" v-if="group.staff.length > 0">
-                <div class="staff-card" v-for="s in group.staff" :key="s.Email" @click="openStaffModal(s)">
-                  <div class="staff-avatar">{{ s.Name ? s.Name.charAt(0) : '?' }}</div>
-                  <div class="staff-name">{{ s.Name }} <span
-                      style="font-size:11px; font-weight:normal; color:var(--text-muted);">({{
-                      calculateAge(s.Birth_Date) }}歳)</span></div>
-                  <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <span class="staff-role" :class="s.Role">{{ s.Role }}</span>
-                    <button @click.stop="editStaff(s)" class="btn-outline" style="padding:2px 6px; font-size:11px;">
-                      <span class="material-icons-outlined" style="font-size:14px;">edit</span>
-                    </button>
-                  </div>
-                  <div class="staff-email">{{ s.Email }}</div>
-                  <div class="staff-tags" v-if="s.Qualifications">
-                    <span class="skill-tag" v-for="q in parseQualifications(s.Qualifications)" :key="q">{{ q }}</span>
+                <!-- ルートの直属スタッフ -->
+                <div class="staff-grid" v-if="node.staff.length > 0"
+                  style="grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap:10px; margin-bottom:8px;">
+                  <div class="staff-card" v-for="s in node.staff" :key="s.Staff_ID" @click="openStaffModal(s)">
+                    <div class="staff-avatar">{{ s.Name ? s.Name.charAt(0) : '?' }}</div>
+                    <div class="staff-name">{{ s.Name }} <span
+                        style="font-size:11px; font-weight:normal; color:var(--text-muted);">({{
+                        calculateAge(s.Birth_Date) }}歳)</span></div>
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                      <span class="staff-role" :class="s.Role">{{ s.Role }}</span>
+                      <button @click.stop="editStaff(s)" class="btn-outline"
+                        style="padding:2px 6px; font-size:11px;"><span class="material-icons-outlined"
+                          style="font-size:14px;">edit</span></button>
+                    </div>
+                    <div class="staff-email">{{ s.Email }}</div>
                   </div>
                 </div>
               </div>
             </div>
-          </div>
+          </template>
         </div>
       </div>
 
@@ -1933,6 +2044,56 @@
         </div>
       </div>
 
+      <!-- System Blueprint View (Removed per user request) -->
+
+      <!-- ===== Route Management View (点検ルート管理) ===== -->
+      <div v-if="currentView === 'routes'" class="inventory-view">
+        <div class="inventory-title">
+          <span class="material-icons-outlined">route</span>
+          点検ルート管理
+          <div style="flex:1;"></div>
+          <!-- 将来的な追加ボタン用 -->
+          <!-- <button @click="addRoute" class="btn-primary">
+            <span class="material-icons-outlined">add</span>
+            ルート追加
+          </button> -->
+        </div>
+
+        <div class="inventory-grid" style="grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));">
+          <div v-for="route in inspectionRoutes" :key="route.Route_ID" class="card">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+              <h3 style="margin:0; color:var(--primary-dark);">{{ route.Route_Name }}</h3>
+              <span class="status-badge 稼働中">{{ route.Route_ID }}</span>
+            </div>
+
+            <div class="detail-section">
+              <div class="detail-label">点検順序</div>
+              <div class="timeline" style="margin-top:10px;">
+                <div
+                  v-for="(detail, idx) in routeDetails.filter(d => d.Route_ID === route.Route_ID).sort((a,b) => a.Order - b.Order)"
+                  :key="detail.Route_Detail_ID" class="timeline-item">
+                  <div class="timeline-dot" style="background:var(--primary);">{{ detail.Order }}</div>
+                  <div class="timeline-content">
+                    <div style="font-weight:600;">{{ getEquipmentName(detail.Equipment_ID) }}</div>
+                    <div style="font-size:11px; color:var(--text-muted);">
+                      ID: {{ detail.Equipment_ID }}
+                      <span v-if="detail.Instructions" style="margin-left:8px; color:var(--warning-dark);">
+                        <span class="material-icons-outlined" style="font-size:12px; vertical-align:middle;">info</span>
+                        {{ detail.Instructions }}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div style="margin-top:16px; display:flex; gap:8px; justify-content:flex-end;">
+              <button @click="selectEquipment(equipment.find(e => e.Equipment_ID === route.Equipment_IDs))"
+                v-if="route.Equipment_IDs" class="btn-outline">旧データ表示</button>
+            </div>
+          </div>
+        </div>
+      </div>
     </main>
 
     <!-- Staff Modal (Tabbed) -->
@@ -2127,7 +2288,9 @@
               style="display:block;font-size:12px;font-weight:600;margin-bottom:4px;color:var(--text-secondary);">変更後の値</label>
             <select v-model="staffChangeModal.newValue" class="form-control"
               style="width:100%;padding:10px;border:1px solid var(--border-light);border-radius:6px; font-size:14px;">
-              <option v-for="opt in staffChangeModal.options" :key="opt.value" :value="opt.value">
+              <option v-for="opt in staffChangeModal.options" :key="opt.value" :value="opt.value"
+                :disabled="opt.disabled"
+                :style="opt.disabled ? 'font-weight:bold; background:#f5f5f5; color:#333;' : ''">
                 {{ opt.label }}
               </option>
             </select>
@@ -2220,7 +2383,7 @@
   </div>
 
   <script>
-    const { createApp, ref, computed, onMounted, reactive } = Vue;
+    const { createApp, ref, computed, onMounted, reactive, watch, nextTick } = Vue;
 
     createApp({
       setup() {
@@ -2248,6 +2411,7 @@
         const facilities = ref([]);
         const equipment = ref([]);
         const inspectionRoutes = ref([]);
+        const routeDetails = ref([]); // [NEW] v2
         const inspectionResults = ref([]);
         const construction = ref([]);
         const items = ref([]);
@@ -2260,6 +2424,10 @@
         const qualifications = ref([]);
         const qualApplications = ref([]);
         const staffChanges = ref([]);
+
+        // System Blueprint
+        const blueprintText = ref('');
+        const isMermaidInitialized = ref(false);
 
         const selectedEquipment = ref(null);
         const currentTimeline = ref([]);
@@ -2437,14 +2605,14 @@
           const orgMap = {};
           // Initialize Map
           organizations.value.forEach(o => {
-            orgMap[o.Org_ID] = { ...o, children: [], staff: [], _open: true };
+            orgMap[o.Org_ID] = { ...o, children: [], staff: [], _open: false };
           });
           // Add Staff
           staff.value.forEach(s => {
             if (s.Org_ID && orgMap[s.Org_ID]) {
               orgMap[s.Org_ID].staff.push(s);
             } else {
-              if (!orgMap['OTHER']) orgMap['OTHER'] = { Org_ID: 'OTHER', Name: '所属不明', children: [], staff: [], _open: true, Sort_Order: 9999 };
+              if (!orgMap['OTHER']) orgMap['OTHER'] = { Org_ID: 'OTHER', Name: '所属不明', children: [], staff: [], _open: false, Sort_Order: 9999 };
               orgMap['OTHER'].staff.push(s);
             }
           });
@@ -2480,6 +2648,15 @@
           sortOrg(roots);
           return roots;
         });
+
+        // 組織ノード配下の全スタッフ数を再帰カウント
+        function countAllStaff(node) {
+          let count = node.staff ? node.staff.length : 0;
+          if (node.children) {
+            node.children.forEach(c => { count += countAllStaff(c); });
+          }
+          return count;
+        }
 
 
         const selectedFacilityMapLink = computed(() => {
@@ -2572,6 +2749,12 @@
         }
 
         // --- ID to Name Mapping Helpers ---
+        function getEquipmentName(id) {
+          if (!id) return '-';
+          const eq = equipment.value.find(e => String(e.Equipment_ID).trim() === String(id).trim());
+          return eq ? eq.Name : id;
+        }
+
         function getStaffName(sid) {
           const s = staff.value.find(x => x.Staff_ID === sid);
           return s ? s.Name : sid;
@@ -2916,7 +3099,7 @@
                   { key: 'Org_ID', label: '組織ID', type: 'text', readonly: true },
                   { key: 'Name', label: '組織名', type: 'text' },
                   { key: 'Org_Code', label: '部署コード (連携用)', type: 'text' },
-                  { key: 'Type', label: '種別', type: 'select', options: ['事業部', '事業所', '課', '係'] },
+                  { key: 'Type', label: '種別', type: 'select', options: ['部', '事業部', '事業所', '課', '係'] },
                   { key: 'Parent_Org_ID', label: '上位組織', type: 'select', options: [{ value: '', label: '(なし)' }, ...organizations.value.map(o => ({ value: o.Org_ID, label: getOrgFullPath(o.Org_ID) }))] },
                   { key: 'Sort_Order', label: '並び順 (数値)', type: 'number' },
                   { key: 'Is_Active', label: '状態', type: 'select', options: ['有効', '無効'] }
@@ -2938,7 +3121,7 @@
               { key: 'Org_ID', label: '組織ID', type: 'text', readonly: true },
               { key: 'Name', label: '組織名', type: 'text' },
               { key: 'Org_Code', label: '部署コード (連携用)', type: 'text' },
-              { key: 'Type', label: '種別', type: 'select', options: ['事業部', '事業所', '課', '係'] },
+              { key: 'Type', label: '種別', type: 'select', options: ['部', '事業部', '事業所', '課', '係'] },
               { key: 'Parent_Org_ID', label: '上位組織', type: 'select', options: [{ value: '', label: '(なし)' }, ...organizations.value.map(o => ({ value: o.Org_ID, label: getOrgFullPath(o.Org_ID) }))] },
               { key: 'Sort_Order', label: '並び順 (数値)', type: 'number' },
               { key: 'Is_Active', label: '状態', type: 'select', options: ['有効', '無効'] }
@@ -3044,6 +3227,10 @@
               { key: 'Kana_Mei', label: '名（フリガナ）', type: 'text' },
               { key: 'Email', label: 'メールアドレス', type: 'text' },
               { key: 'Role', label: 'システム役割', type: 'select', options: ['管理者', '作業員'] },
+              { key: 'Org_ID', label: '所属組織', type: 'select', options: organizations.value.filter(o => o.Is_Active !== '無効').map(o => ({ value: o.Org_ID, label: getOrgFullPath(o.Org_ID) })) },
+              { key: 'Position', label: '役職', type: 'select', options: ['', '主任', '係長', '課長補佐', '課長', '所長', '部長'] },
+              { key: 'Grade', label: '等級', type: 'select', options: ['', '1', '2', '3', '4', '5', '6', '7', '8'] },
+              { key: 'Responsibility', label: '職責', type: 'select', options: ['', '技術員', '技術責任者', '統括責任者'] },
               { key: 'Birth_Date', label: '生年月日', type: 'date' },
               { key: 'Blood_Type', label: '血液型', type: 'select', options: ['A', 'B', 'O', 'AB'] },
               { key: 'Address', label: '現住所', type: 'text' },
@@ -3068,7 +3255,22 @@
             case '異動':
               staffChangeModal.fieldChanged = 'Org_ID';
               staffChangeModal.oldValue = s.Org_ID;
-              staffChangeModal.options = organizations.value.filter(o => o.Is_Active !== '無効').map(o => ({ value: o.Org_ID, label: getOrgFullPath(o.Org_ID) }));
+              // 組織を Type 別にグループ化して表示
+              staffChangeModal.options = [];
+              const orgTypes = ['部', '事業部', '事業所', '課', '係'];
+              orgTypes.forEach(type => {
+                const orgsOfType = organizations.value.filter(o => o.Is_Active !== '無効' && o.Type === type);
+                if (orgsOfType.length > 0) {
+                  staffChangeModal.options.push({ value: '__group__' + type, label: '── ' + type + ' ──', disabled: true });
+                  orgsOfType.forEach(o => staffChangeModal.options.push({ value: o.Org_ID, label: getOrgFullPath(o.Org_ID) }));
+                }
+              });
+              // Type未設定の組織
+              const noType = organizations.value.filter(o => o.Is_Active !== '無効' && !orgTypes.includes(o.Type));
+              if (noType.length > 0) {
+                staffChangeModal.options.push({ value: '__group__other', label: '── その他 ──', disabled: true });
+                noType.forEach(o => staffChangeModal.options.push({ value: o.Org_ID, label: getOrgFullPath(o.Org_ID) }));
+              }
               break;
             case '昇進':
               staffChangeModal.fieldChanged = 'Position';
@@ -3133,6 +3335,7 @@
               facilities.value = data.facilities || [];
               equipment.value = data.equipment || [];
               inspectionRoutes.value = data.inspectionRoutes || [];
+              routeDetails.value = data.routeDetails || []; // [NEW] v2
               inspectionResults.value = data.inspectionResults || [];
               construction.value = data.construction || [];
               items.value = data.items || [];
@@ -3163,9 +3366,49 @@
             .getInitialData();
         });
 
+
+
+        // Initialize
+        onMounted(() => {
+          // Mermaid Init
+          mermaid.initialize({ startOnLoad: false, theme: 'default' });
+        });
+
+        // Watch for view change to 'blueprint'
+        watch(currentView, (newVal) => {
+          if (newVal === 'blueprint') {
+            loadBlueprint();
+          }
+        });
+
+        const loadBlueprint = () => {
+          if (blueprintText.value) {
+            // Already loaded, just render
+            nextTick(() => {
+              renderMermaid();
+            });
+            return;
+          }
+
+          google.script.run.withSuccessHandler((text) => {
+            blueprintText.value = text;
+            nextTick(() => {
+              renderMermaid();
+            });
+          }).getSchemaDiagram();
+        };
+
+        const renderMermaid = () => {
+          const container = document.getElementById('mermaid-container');
+          if (container) {
+            container.removeAttribute('data-processed'); // Force re-render if needed
+            mermaid.run({ nodes: [container] });
+          }
+        };
+
         return {
           loading, currentView,
-          facilities, equipment, inspectionRoutes, inspectionResults,
+          facilities, equipment, inspectionRoutes, routeDetails, inspectionResults,
           construction, items, inventoryLogs, staff, dashboardData,
           organizations, contracts, qualifications, qualApplications,
           treeGroupBy, filters,
@@ -3181,10 +3424,11 @@
           getStaffName, getQualName, getOrgFullPath, getOrgPathOnly,
           handleSave, handleDelete, addEquipment, editEquipment, addStaff, editStaff,
           showAddMenu, addFacility, addItem,
-          staffTreeData, qualTab,
+          staffTreeData, countAllStaff, qualTab,
           addQualification, editQualification, addQualApplication, editQualApplication,
           addOrganization, editOrganization,
-          staffChanges, staffModalTab, staffChangeModal, openStaffChangeModal, saveStaffChange
+          staffChanges, staffModalTab, staffChangeModal, openStaffChangeModal, saveStaffChange,
+          getEquipmentName
         };
       }
     }).mount('#app');
