@@ -1,726 +1,425 @@
 /**
  * ============================================================
- * 上下水道施設維持管理システム - 管理用Webアプリ バックエンドAPI
+ * 上下水道施設維持管理システム - 管理用Webアプリ バックエンドAPI (v2.4)
  * ============================================================
  * 
- * GAS HtmlService によるスタンドアロン Web App
- * setupDatabase.gs で作成した「水インフラ管理DB」に接続
- * 
- * ★ デプロイ方法:
- *   1. setupDatabase() を実行してスプレッドシートを作成
- *   2. 作成されたスプレッドシートを開き「拡張機能 > Apps Script」を開く
- *   3. このプロジェクトに Code.gs と index.html を作成して貼り付け
- *   4. デプロイ実行（ID設定は不要です）
+ * Update History:
+ * v2.4: 業務マスタ（物品・点検ルート）編集機能の実装
+ * - 物品入出庫ログ記録機能の追加
+ * - 点検ルート詳細の一括保存機能
  */
 
 // ============================================================
-// 設定
+// データベースID設定
 // ============================================================
 
-/**
- * ★ スプレッドシートの ID (setupDatabase.gs にて定義されています)
- */
-// var SPREADSHEET_ID は setupDatabase.gs で定義
+const V2_MASTER_DB_ID = '1RKn18-VLaGz1W8aB6lBeOAfQWvSnvi2Oo4wDtFbiNrQ';
+const V2_CSV_FOLDER_ID = '1LNSasnpyuKa05P7Nf5kDSds7T_1Gackj';
 
+// ============================================================
 // シート名定数
-var SHEET = {
-  FACILITIES:          'M_Facilities',
-  EQUIPMENT:           'M_Equipment',
-  INSPECTION_GROUPS:   'M_Inspection_Groups',
-  INSPECTION_ITEMS:     'M_Inspection_Items',
-  INSPECTION_RESULTS:  'T_Inspection_Results',
-  CONSTRUCTION:        'T_Construction_History',
-  ITEMS:               'M_Items',
-  INVENTORY_LOGS:      'T_Inventory_Logs',
-  STAFF:               'M_Staff',
-  INSPECTION_ROUTES:   'M_Inspection_Routes',
-  ROUTE_DETAILS:       'M_Route_Details', // [NEW] v2
-  // [NEW] Phase 5
+// ============================================================
+
+const SHEET_MASTER = {
   ORGANIZATIONS:       'M_Organizations',
   CONTRACTS:           'M_Contracts',
+  FACILITIES:          'M_Facilities',
+  STAFF:               'M_Staff',
   QUALIFICATIONS:      'M_Qualifications',
   QUAL_APPLICATIONS:   'T_Qual_Applications',
-  STAFF_CHANGES:       'T_Staff_Changes'
+  STAFF_CHANGES:       'T_Staff_Changes',
+  ITEMS_COMMON:        'M_Items_Common'
 };
 
+const SHEET_FACILITY = {
+  LOCATIONS:           'M_Locations',
+  EQUIPMENT:           'M_Equipment',
+  INSPECTION_GROUPS:   'M_Inspection_Groups',
+  INSPECTION_ITEMS:    'M_Inspection_Items',
+  INSPECTION_RESULTS:  'T_Inspection_Results',
+  CONSTRUCTION:        'T_Construction_History',
+  ITEMS_FACILITY:      'M_Items_Facility',
+  INVENTORY_LOGS:      'T_Inventory_Logs',
+  INSPECTION_ROUTES:   'M_Inspection_Routes',
+  ROUTE_DETAILS:       'M_Route_Details'
+};
+
+const SHEET = Object.assign({}, SHEET_MASTER, SHEET_FACILITY);
+
+const SHEET_DB_MAP = {};
+Object.keys(SHEET_MASTER).forEach(key => SHEET_DB_MAP[SHEET_MASTER[key]] = 'MASTER');
+Object.keys(SHEET_FACILITY).forEach(key => SHEET_DB_MAP[SHEET_FACILITY[key]] = 'FACILITY');
+
+// ============================================================
 // 自動採番用プレフィックスマッピング
-var ID_PREFIX = {
-  'M_Facilities':           { column: 'Facility_ID',      prefix: 'F',   digits: 3 },
-  'M_Equipment':            { column: 'Equipment_ID',     prefix: 'E',   digits: 3 },
-  'M_Inspection_Groups':    { column: 'Group_ID',         prefix: 'GRP', digits: 4 },
-  'M_Inspection_Items':     { column: 'Item_ID',          prefix: 'ITM', digits: 5 },
-  'M_Inspection_Routes':    { column: 'Route_ID',         prefix: 'R',   digits: 3 },
-  'M_Route_Details':        { column: 'Route_Detail_ID',  prefix: 'RD',  digits: 5 },
-  'M_Organizations':        { column: 'Org_ID',           prefix: 'ORG', digits: 3 },
-  'M_Items':                { column: 'Item_ID',          prefix: 'ITEM', digits: 3 },
-  'M_Qualifications':       { column: 'Qual_ID',          prefix: 'Q',   digits: 3 },
-  'T_Qual_Applications':    { column: 'App_ID',           prefix: 'A',   digits: 3 },
-  'T_Staff_Changes':        { column: 'Change_ID',        prefix: 'CHG', digits: 3 },
-  'T_Inspection_Results':   { column: 'Result_ID',        prefix: 'IR',  digits: 3 },
-  'T_Construction_History': { column: 'Construction_ID',  prefix: 'C',   digits: 3 },
-  'T_Inventory_Logs':       { column: 'Log_ID',           prefix: 'LOG', digits: 3 }
-};
+// ============================================================
 
+const ID_PREFIX = {
+  'M_Facilities':           { column: 'Facility_ID',      prefix: 'F',    digits: 3, db: 'MASTER' },
+  'M_Equipment':            { column: 'Equipment_ID',     prefix: 'E',    digits: 5, db: 'FACILITY' },
+  'M_Locations':            { column: 'Location_ID',      prefix: 'L',    digits: 5, db: 'FACILITY' },
+  'M_Inspection_Groups':    { column: 'Group_ID',         prefix: 'GRP',  digits: 4, db: 'FACILITY' },
+  'M_Inspection_Items':     { column: 'Item_ID',          prefix: 'ITM',  digits: 5, db: 'FACILITY' },
+  'M_Inspection_Routes':    { column: 'Route_ID',         prefix: 'R',    digits: 3, db: 'FACILITY' },
+  'M_Route_Details':        { column: 'Route_Detail_ID',  prefix: 'RD',   digits: 5, db: 'FACILITY' },
+  'M_Organizations':        { column: 'Org_ID',           prefix: 'ORG',  digits: 3, db: 'MASTER' },
+  'M_Items_Common':         { column: 'Item_ID',          prefix: 'ITEM', digits: 3, db: 'MASTER' },
+  'M_Items_Facility':       { column: 'Item_ID',          prefix: 'ITEM', digits: 3, db: 'FACILITY' },
+  'M_Staff':                { column: 'Staff_ID',         prefix: 'S',    digits: 4, db: 'MASTER' },
+  'M_Qualifications':       { column: 'Qual_ID',          prefix: 'Q',    digits: 3, db: 'MASTER' },
+  'T_Qual_Applications':    { column: 'App_ID',           prefix: 'A',    digits: 3, db: 'MASTER' },
+  'T_Staff_Changes':        { column: 'Change_ID',        prefix: 'CHG',  digits: 3, db: 'MASTER' },
+  'T_Inspection_Results':   { column: 'Result_ID',        prefix: 'IR',   digits: 5, db: 'FACILITY' },
+  'T_Construction_History': { column: 'Construction_ID',  prefix: 'C',    digits: 3, db: 'FACILITY' },
+  'T_Inventory_Logs':       { column: 'Log_ID',           prefix: 'LOG',  digits: 3, db: 'FACILITY' }
+};
 
 // ============================================================
 // Web App エントリポイント
 // ============================================================
 
-/**
- * GAS Web App のエントリポイント
- * index.html を返す
- */
 function doGet(e) {
   return HtmlService.createHtmlOutputFromFile('index')
-    .setTitle('水インフラ管理システム')
+    .setTitle('水インフラ管理システム v2.4')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
-
 // ============================================================
-// ヘルパー関数
+// 公開API
 // ============================================================
 
-/**
- * スプレッドシートオブジェクトを取得
- */
-function getSpreadsheet_() {
-  if (SPREADSHEET_ID) {
-    return SpreadsheetApp.openById(SPREADSHEET_ID);
-  } else {
-    // コンテナバインド（スプレッドシート内のApps Script）として実行する場合
-    return SpreadsheetApp.getActiveSpreadsheet();
+function getInitialData() {
+  try {
+    return {
+      facilities: getFacilities() || [],
+      organizations: getSheetDataCached_(SHEET_MASTER.ORGANIZATIONS, 'MASTER') || [],
+      staff: getSheetDataCached_(SHEET_MASTER.STAFF, 'MASTER') || [],
+      contracts: getSheetDataCached_(SHEET_MASTER.CONTRACTS, 'MASTER') || [],
+      qualifications: getSheetDataCached_(SHEET_MASTER.QUALIFICATIONS, 'MASTER') || [],
+      qualApplications: getSheetDataCached_(SHEET_MASTER.QUAL_APPLICATIONS, 'MASTER') || [],
+      staffChanges: getSheetDataCached_(SHEET_MASTER.STAFF_CHANGES, 'MASTER') || [],
+      itemsCommon: getSheetDataCached_(SHEET_MASTER.ITEMS_COMMON, 'MASTER') || []
+    };
+  } catch (e) {
+    Logger.log('getInitialData Error: ' + e.message);
+    throw new Error('初期データの読み込みに失敗しました: ' + e.message);
   }
 }
 
-/**
- * シートの全データをオブジェクト配列として取得
- * @param {string} sheetName - シート名
- * @returns {Object[]} ヘッダーをキーとしたオブジェクト配列
- */
-function getSheetData_(sheetName) {
-  var ss = getSpreadsheet_();
-  var sheet = ss.getSheetByName(sheetName);
-  if (!sheet) return [];
-  
-  var data = sheet.getDataRange().getValues();
-  if (data.length <= 1) return []; // ヘッダーのみ
-  
-  var headers = data[0];
-  var rows = [];
-  
-  // [NEW] 必要な列が欠落している場合のための補完定義
-  var requiredFields = {
-    'M_Staff': ['Kana_Sei', 'Kana_Mei', 'Birth_Date', 'Blood_Type', 'Address', 'Phone', 'Emergency_Contact', 'Joined_Date', 'Health_Check_Date', 'Employment_Status', 'Position', 'Grade', 'Responsibility'],
-    'T_Qual_Applications': ['Expiration_Date', 'License_Number'],
-    'M_Organizations': ['Sort_Order', 'Is_Active', 'Org_Code']
+function getFacilityData(facilityId) {
+  if (!facilityId) throw new Error('施設IDが指定されていません');
+  setCurrentFacility(facilityId);
+  return {
+    facilityId: facilityId,
+    locations: getLocations(facilityId),
+    equipment: getEquipment(facilityId),
+    inspectionGroups: getSheetDataCached_(SHEET_FACILITY.INSPECTION_GROUPS, 'FACILITY', facilityId),
+    inspectionItems: getSheetDataCached_(SHEET_FACILITY.INSPECTION_ITEMS, 'FACILITY', facilityId),
+    inspectionRoutes: getSheetDataCached_(SHEET_FACILITY.INSPECTION_ROUTES, 'FACILITY', facilityId),
+    routeDetails: getSheetDataCached_(SHEET_FACILITY.ROUTE_DETAILS, 'FACILITY', facilityId),
+    inspectionResults: getSheetDataCached_(SHEET_FACILITY.INSPECTION_RESULTS, 'FACILITY', facilityId),
+    construction: getSheetDataCached_(SHEET_FACILITY.CONSTRUCTION, 'FACILITY', facilityId),
+    items: getSheetDataCached_(SHEET_FACILITY.ITEMS_FACILITY, 'FACILITY', facilityId),
+    inventoryLogs: getSheetDataCached_(SHEET_FACILITY.INVENTORY_LOGS, 'FACILITY', facilityId)
   };
+}
 
-  // [NEW] デフォルト値の定義
-  var defaultValues = {
-    'M_Organizations': {
-      'Sort_Order': 999,
-      'Is_Active': '有効',
-      'Org_Code': ''
+function getFacilities() {
+  return getSheetDataCached_(SHEET_MASTER.FACILITIES, 'MASTER');
+}
+
+// ============================================================
+// データ取得ロジック
+// ============================================================
+
+function getEquipment(facilityId) {
+  if (!facilityId) return [];
+  const equipment = getSheetDataCached_(SHEET_FACILITY.EQUIPMENT, 'FACILITY', facilityId);
+  const locations = getSheetDataCached_(SHEET_FACILITY.LOCATIONS, 'FACILITY', facilityId);
+  const locationMap = {};
+  locations.forEach(loc => { if (loc.Location_ID) locationMap[loc.Location_ID] = loc; });
+  const facilities = getFacilities();
+  const facility = facilities.find(f => f.Facility_ID === facilityId);
+  const facilityName = facility ? facility.Name : facilityId;
+  return equipment.map(eq => {
+    const loc = locationMap[eq.Location_ID] || {};
+    return {
+      ...eq,
+      Building: normalizeValue_(loc.Building || eq.Building),
+      Floor: normalizeValue_(loc.Floor || eq.Floor),
+      Room: normalizeValue_(loc.Room || eq.Room),
+      Facility_Name: facilityName,
+      Location_Name: loc.Name || '' 
+    };
+  });
+}
+
+function getLocations(facilityId) {
+  return getSheetDataCached_(SHEET_FACILITY.LOCATIONS, 'FACILITY', facilityId);
+}
+
+// ============================================================
+// セッション・DB接続管理
+// ============================================================
+
+function getCurrentFacilityId_() {
+  return CacheService.getUserCache().get('CURRENT_FACILITY_ID');
+}
+
+function setCurrentFacility(facilityId) {
+  CacheService.getUserCache().put('CURRENT_FACILITY_ID', facilityId, 21600);
+  return { success: true };
+}
+
+function openMasterDB() { return SpreadsheetApp.openById(V2_MASTER_DB_ID); }
+
+function openFacilityDB(facilityId) {
+  if (!facilityId) facilityId = getCurrentFacilityId_();
+  if (!facilityId) throw new Error('Facility ID required');
+  const dbFileId = getFacilityDBFileId_(facilityId);
+  if (!dbFileId) throw new Error(`Facility DB not found for ID: ${facilityId}`);
+  return SpreadsheetApp.openById(dbFileId);
+}
+
+function getFacilityDBFileId_(facilityId) {
+  const cache = CacheService.getScriptCache();
+  const cacheKey = `V2_DB_FILE_ID_${facilityId}`;
+  let dbFileId = cache.get(cacheKey);
+  if (dbFileId) return dbFileId;
+  const masterSS = openMasterDB();
+  const sheet = masterSS.getSheetByName(SHEET_MASTER.FACILITIES);
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0];
+  const fIdIdx = headers.indexOf('Facility_ID');
+  const fileIdIdx = headers.indexOf('DB_File_ID');
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][fIdIdx] === facilityId) {
+      dbFileId = data[i][fileIdIdx];
+      if (dbFileId) { cache.put(cacheKey, dbFileId, 3600); return dbFileId; }
     }
-  };
-  
-  // 電話番号など、文字列強制変換が必要なフィールド
-  var forceStringFields = {
-    'M_Staff': ['Phone', 'Emergency_Contact', 'Staff_ID']
-  };
-  
-  for (var i = 1; i < data.length; i++) {
-    var row = {};
-    for (var j = 0; j < headers.length; j++) {
-      var val = data[i][j];
-      // Date型の場合は文字列に変換
+  }
+  return null;
+}
+
+function getSpreadsheetBySheetName_(sheetName, facilityId) {
+  const dbType = SHEET_DB_MAP[sheetName];
+  if (dbType === 'MASTER') return openMasterDB();
+  if (dbType === 'FACILITY') return openFacilityDB(facilityId);
+  throw new Error('Unknown sheet: ' + sheetName);
+}
+
+// ============================================================
+// ヘルパー関数（データ取得・キャッシュ）
+// ============================================================
+
+function getSheetDataCached_(sheetName, dbType, facilityId) {
+  const cacheKey = (dbType === 'FACILITY' && facilityId)
+    ? `V2_${sheetName}_${facilityId}` : `V2_${sheetName}_MASTER`;
+  const cache = CacheService.getScriptCache();
+  const cached = cache.get(cacheKey);
+  if (cached) { try { return JSON.parse(cached); } catch(e) { } }
+  const data = getSheetData_(sheetName, dbType, facilityId);
+  try {
+    const json = JSON.stringify(data);
+    if (json.length < 100000) cache.put(cacheKey, json, 600);
+  } catch(e) { Logger.log('Cache skip: ' + sheetName); }
+  return data;
+}
+
+function getSheetData_(sheetName, dbType, facilityId) {
+  let ss = getSpreadsheetBySheetName_(sheetName, facilityId);
+  const sheet = ss.getSheetByName(sheetName);
+  if (!sheet) return [];
+  const data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return [];
+  const headers = data[0];
+  const rows = [];
+  for (let i = 1; i < data.length; i++) {
+    const row = {};
+    let isEmpty = true;
+    for (let j = 0; j < headers.length; j++) {
+      let val = data[i][j];
       if (val instanceof Date) {
         row[headers[j]] = Utilities.formatDate(val, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
       } else {
         row[headers[j]] = val;
       }
+      if (val !== '') isEmpty = false;
     }
-    
-    // 文字列強制変換（電話番号等）
-    if (forceStringFields[sheetName]) {
-      forceStringFields[sheetName].forEach(function(field) {
-        if (row[field] !== undefined && row[field] !== '') {
-          row[field] = String(row[field]);
-        }
-      });
-    }
-    
-    // 欠落している列を空文字で補完
-    if (requiredFields[sheetName]) {
-      requiredFields[sheetName].forEach(function(field) {
-        if (row[field] === undefined) {
-          var defaultVal = (defaultValues[sheetName] && defaultValues[sheetName][field] !== undefined)
-            ? defaultValues[sheetName][field]
-            : '';
-          row[field] = defaultVal;
-        }
-      });
-    }
-    
-    rows.push(row);
+    if (!isEmpty) rows.push(row);
   }
-  
   return rows;
 }
 
-/**
- * シートにデータを追記
- * @param {string} sheetName - シート名
- * @param {Object} rowData - ヘッダー名をキーとしたデータオブジェクト
- */
-function appendRow_(sheetName, rowData) {
-  var ss = getSpreadsheet_();
-  var sheet = ss.getSheetByName(sheetName);
-  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-  
-  var newRow = headers.map(function(h) {
-    return rowData[h] !== undefined ? rowData[h] : '';
-  });
-  
-  sheet.appendRow(newRow);
+function normalizeValue_(value) {
+  if (value === null || value === undefined) return '(未設定)';
+  const s = String(value).trim();
+  if (s === '' || s === '-' || s === '---') return '(未設定)';
+  return s;
 }
-
-/**
- * シートの特定行を更新
- * @param {string} sheetName - シート名
- * @param {string} keyColumn - 主キー列名
- * @param {string} keyValue - 主キー値
- * @param {Object} rowData - 更新データ
- */
-function updateRow_(sheetName, keyColumn, keyValue, rowData) {
-  var ss = getSpreadsheet_();
-  var sheet = ss.getSheetByName(sheetName);
-  var data = sheet.getDataRange().getValues();
-  var headers = data[0];
-  var keyColIdx = headers.indexOf(keyColumn);
-  
-  if (keyColIdx === -1) throw new Error('Key column not found: ' + keyColumn);
-  
-  for (var i = 1; i < data.length; i++) {
-    if (String(data[i][keyColIdx]) === String(keyValue)) {
-      for (var j = 0; j < headers.length; j++) {
-        if (rowData[headers[j]] !== undefined) {
-          sheet.getRange(i + 1, j + 1).setValue(rowData[headers[j]]);
-        }
-      }
-      return true;
-    }
-  }
-  return false;
-}
-
-/**
- * シートに不足しているヘッダーを追加する
- * @param {string} sheetName - シート名
- * @param {string[]} requiredHeaders - 必要なヘッダー名
- */
-function ensureHeaders_(sheetName, requiredHeaders) {
-  var ss = getSpreadsheet_();
-  var sheet = ss.getSheetByName(sheetName);
-  if (!sheet) return;
-  
-  var headers = sheet.getRange(1, 1, 1, sheet.getMaxColumns()).getValues()[0];
-  var missing = requiredHeaders.filter(function(h) {
-    return headers.indexOf(h) === -1;
-  });
-  
-  if (missing.length > 0) {
-    var startCol = headers.filter(Boolean).length + 1;
-    var range = sheet.getRange(1, startCol, 1, missing.length);
-    range.setValues([missing]);
-    range.setBackground('#1565C0'); // Default header color
-    range.setFontColor('#FFFFFF');
-    range.setFontWeight('bold');
-  }
-}
-
 
 // ============================================================
-// フロントエンド向け公開API (google.script.run から呼び出し)
+// データ更新系（CRUD）
 // ============================================================
 
-/**
- * 初回ロード用: 全データを一括取得
- * ネットワーク呼び出し回数を最小化するため一括で返す
- */
-const CACHE_PREFIX = 'SHEET_CACHE_';
-const CACHE_EXPIRATION_SEC = 21600; // 6 hours
-
-/**
- * シートデータを取得（キャッシュ優先）
- */
-function getSheetDataCached_(sheetName) {
-  var cache = CacheService.getScriptCache();
-  var cached = cache.get(CACHE_PREFIX + sheetName);
-  
-  if (cached) {
-    try {
-      return JSON.parse(cached);
-    } catch (e) {
-      console.warn('Cache parse failed for ' + sheetName);
-    }
-  }
-  
-  var data = getSheetData_(sheetName);
+function saveData(sheetName, data, idColumn, idValue, facilityId) {
   try {
-    // 1枚のシートデータが100KBを超えるとここでも失敗するが、全体100KBよりは余裕がある
-    cache.put(CACHE_PREFIX + sheetName, JSON.stringify(data), CACHE_EXPIRATION_SEC);
-  } catch (e) {
-    console.warn('Cache put failed for ' + sheetName + ' (likely too large)');
-  }
-  return data;
-}
-
-/**
- * 初回ロード用: 全データを一括取得
- */
-function getInitialData() {
-  return {
-    facilities:         getSheetDataCached_(SHEET.FACILITIES),
-    equipment:          getSheetDataCached_(SHEET.EQUIPMENT),
-    inspectionRoutes:   getSheetDataCached_(SHEET.INSPECTION_ROUTES),
-    inspectionResults:  getSheetDataCached_(SHEET.INSPECTION_RESULTS),
-    construction:       getSheetDataCached_(SHEET.CONSTRUCTION),
-    items:              getSheetDataCached_(SHEET.ITEMS),
-    inventoryLogs:      getSheetDataCached_(SHEET.INVENTORY_LOGS),
-    staff:              getSheetDataCached_(SHEET.STAFF),
-    organizations:      getSheetDataCached_(SHEET.ORGANIZATIONS),
-    contracts:          getSheetDataCached_(SHEET.CONTRACTS),
-    qualifications:     getSheetDataCached_(SHEET.QUALIFICATIONS),
-    qualApplications:   getSheetDataCached_(SHEET.QUAL_APPLICATIONS),
-    staffChanges:       getSheetDataCached_(SHEET.STAFF_CHANGES),
-    routeDetails:       getSheetDataCached_(SHEET.ROUTE_DETAILS) // [NEW] v2
-  };
-}
-
-/**
- * デバッグ用: 生成されたER図テキストをログに出力する
- */
-function debugGetERText() {
-  var text = getSchemaDiagram();
-  Logger.log(text);
-  return text;
-}
-
-function clearCache_(sheetName) {
-  var cache = CacheService.getScriptCache();
-  if (sheetName) {
-    cache.remove(CACHE_PREFIX + sheetName);
-  } else {
-    // 全クリア（必要に応じて）
-    Object.keys(SHEET).forEach(function(key) {
-      cache.remove(CACHE_PREFIX + SHEET[key]);
-    });
-  }
-}
-
-/**
- * 施設一覧を取得
- */
-function getFacilities() {
-  return getSheetData_(SHEET.FACILITIES);
-}
-
-/**
- * 設備一覧を取得
- */
-function getEquipment() {
-  return getSheetData_(SHEET.EQUIPMENT);
-}
-
-/**
- * 特定設備のタイムライン（点検+工事履歴）を統合取得
- * @param {string} equipmentId - 設備ID
- * @returns {Object[]} 時系列ソートされたイベント配列
- */
-function getEquipmentTimeline(equipmentId) {
-  var timeline = [];
-  
-  // 点検実績
-  var inspections = getSheetData_(SHEET.INSPECTION_RESULTS);
-  inspections.forEach(function(r) {
-    if (r.Equipment_ID === equipmentId) {
-      timeline.push({
-        type: 'inspection',
-        date: r.Timestamp,
-        title: '定期点検',
-        detail: r.Value,
-        status: r.Status,
-        inspector: r.Inspector_ID
-      });
+    if (idColumn && data[idColumn] === undefined && idValue) {
+      data[idColumn] = idValue;
+    } else if (!data[idColumn]) {
+      data[idColumn] = getNextId(sheetName, facilityId);
     }
-  });
-  
-  // 工事履歴
-  var constructions = getSheetData_(SHEET.CONSTRUCTION);
-  constructions.forEach(function(c) {
-    if (c.Equipment_ID === equipmentId) {
-      timeline.push({
-        type: 'construction',
-        date: c.Start_Date,
-        endDate: c.End_Date,
-        title: c.Title,
-        detail: c.Contractor + ' / ' + c.Category,
-        cost: c.Cost,
-        category: c.Category
-      });
-    }
-  });
-  
-  // 日付降順ソート
-  timeline.sort(function(a, b) {
-    return new Date(b.date) - new Date(a.date);
-  });
-  
-  return timeline;
-}
-
-/**
- * 職員一覧を取得
- */
-function getStaff() {
-  return getSheetData_(SHEET.STAFF);
-}
-
-/**
- * 物品・在庫一覧を取得（Current_Stock を入出庫ログから計算）
- */
-function getInventory() {
-  var items = getSheetData_(SHEET.ITEMS);
-  var logs = getSheetData_(SHEET.INVENTORY_LOGS);
-  
-  // 各物品の実在庫を入出庫ログから計算
-  items.forEach(function(item) {
-    var stock = 0;
-    logs.forEach(function(log) {
-      if (log.Item_ID === item.Item_ID) {
-        if (log.Type === '入庫') {
-          stock += Number(log.Quantity);
-        } else if (log.Type === '出庫') {
-          stock -= Number(log.Quantity);
-        }
+    const ss = getSpreadsheetBySheetName_(sheetName, facilityId);
+    const sheet = ss.getSheetByName(sheetName);
+    if (!sheet) throw new Error(`Sheet not found: ${sheetName}`);
+    ensureHeaders_(sheet, sheetName); 
+    const lastRow = sheet.getLastRow();
+    const lastCol = sheet.getLastColumn();
+    const headers = lastRow > 0 ? sheet.getRange(1, 1, 1, lastCol).getValues()[0] : [];
+    if (headers.length === 0) throw new Error(`No headers in ${sheetName}`);
+    let targetRow = -1;
+    const idIdx = headers.indexOf(idColumn);
+    if (idIdx !== -1 && idValue) {
+      const allData = sheet.getDataRange().getValues();
+      for (let i = 1; i < allData.length; i++) {
+        if (String(allData[i][idIdx]) === String(idValue)) { targetRow = i + 1; break; }
       }
-    });
-    item.Calculated_Stock = stock;
-    item.Is_Below_Safety = stock < item.Safety_Stock;
-  });
-  
-  return items;
-}
-
-/**
- * ダッシュボード用: 統計サマリを取得
- */
-function getDashboardSummary() {
-  var equipment = getSheetData_(SHEET.EQUIPMENT);
-  var inspections = getSheetData_(SHEET.INSPECTION_RESULTS);
-  var constructions = getSheetData_(SHEET.CONSTRUCTION);
-  var inventory = getInventory();
-  
-  // 設備ステータス集計
-  var statusCounts = { '稼働中': 0, '停止中': 0, '故障中': 0, '廃棄': 0 };
-  equipment.forEach(function(e) {
-    if (statusCounts[e.Status] !== undefined) {
-      statusCounts[e.Status]++;
     }
-  });
-  
-  // 直近異常件数（30日以内）
-  var now = new Date();
-  var thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-  var recentAlerts = inspections.filter(function(r) {
-    return r.Status === '異常' && new Date(r.Timestamp) >= thirtyDaysAgo;
-  }).length;
-  
-  // 在庫アラート
-  var lowStockItems = inventory.filter(function(i) { return i.Is_Below_Safety; });
-  
-  return {
-    totalFacilities: getSheetData_(SHEET.FACILITIES).length,
-    totalEquipment: equipment.length,
-    statusCounts: statusCounts,
-    recentAlerts: recentAlerts,
-    totalInspections: inspections.length,
-    activeConstructions: constructions.filter(function(c) {
-      var end = new Date(c.End_Date);
-      return end >= now;
-    }).length,
-    lowStockItems: lowStockItems.length,
-    lowStockList: lowStockItems
-  };
-}
-
-/**
- * 設備データを更新
- */
-function updateEquipment(data) {
-  return updateRow_(SHEET.EQUIPMENT, 'Equipment_ID', data.Equipment_ID, data);
-}
-
-/**
- * 職員データを更新
- */
-function updateStaff(data) {
-  return updateRow_(SHEET.STAFF, 'Email', data.Email, data);
-}
-
-/**
- * 汎用保存API: 追加または更新を行う
- * @param {string} sheetName - シート名
- * @param {Object} rowData - 保存するデータ
- * @param {string} idColumn - ID列名 (nullの場合は追加)
- * @param {string} idValue - IDの値 (nullの場合は追加)
- */
-function saveData(sheetName, rowData, idColumn, idValue) {
-  try {
-    var result;
-    // 必要なヘッダーの確保
-    if (sheetName === SHEET.ORGANIZATIONS) {
-      ensureHeaders_(sheetName, ['Sort_Order', 'Is_Active', 'Org_Code']);
-    }
-    
-    // idValue が 0 や空文字列の場合でも判定できるように明示的な比較を行う
-    if (idColumn && idValue !== undefined && idValue !== null && idValue !== '') {
-      // 更新 (Update)
-      var success = updateRow_(sheetName, idColumn, idValue, rowData);
-      if (!success) throw new Error('Update failed: Record not found');
-      result = { success: true, mode: 'update' };
+    if (targetRow !== -1) {
+      const currentVals = sheet.getRange(targetRow, 1, 1, headers.length).getValues()[0];
+      const newVals = headers.map((h, idx) => data[h] !== undefined ? data[h] : currentVals[idx]);
+      sheet.getRange(targetRow, 1, 1, headers.length).setValues([newVals]);
     } else {
-      // 追加 (Append)
-      appendRow_(sheetName, rowData);
-      result = { success: true, mode: 'append' };
+      const rowData = headers.map(h => data[h] !== undefined ? data[h] : '');
+      sheet.appendRow(rowData);
     }
-    clearCache_(sheetName); // 該当シートのキャッシュをクリア
-    return result;
+    try { clearAllCache(); } catch(ce) { }
+    return { success: true, id: data[idColumn] };
   } catch (e) {
-    console.error('saveData error:', e);
-    return { success: false, error: e.toString() };
+    Logger.log('saveData Error: ' + e.message);
+    throw new Error('保存エラー: ' + e.message);
   }
 }
 
 /**
- * 汎用削除API
- * @param {string} sheetName - シート名
- * @param {string} idColumn - ID列名
- * @param {string} idValue - IDの値
+ * 点検ルートの詳細（M_Route_Details）を一括保存する
  */
-function deleteRow(sheetName, idColumn, idValue) {
-  var ss = getSpreadsheet_();
-  var sheet = ss.getSheetByName(sheetName);
-  var data = sheet.getDataRange().getValues();
-  var headers = data[0];
-  var keyColIdx = headers.indexOf(idColumn);
+function saveRouteDetails(routeId, details, facilityId) {
+  if (!routeId || !facilityId) throw new Error('Route_ID and Facility_ID required');
+  const ss = openFacilityDB(facilityId);
+  const sheet = ss.getSheetByName(SHEET_FACILITY.ROUTE_DETAILS);
+  if (!sheet) throw new Error('M_Route_Details sheet not found');
   
-  if (keyColIdx === -1) return { success: false, error: 'Column not found' };
-  
-  for (var i = 1; i < data.length; i++) {
-    if (String(data[i][keyColIdx]) === String(idValue)) {
+  // 1. 既存の該当ルート詳細を削除
+  const data = sheet.getDataRange().getValues();
+  const headers = data[0];
+  const routeIdIdx = headers.indexOf('Route_ID');
+  for (let i = data.length - 1; i >= 1; i--) {
+    if (String(data[i][routeIdIdx]) === String(routeId)) {
       sheet.deleteRow(i + 1);
-      clearCache_(sheetName); // 該当シートのキャッシュをクリア
-      return { success: true };
-    }
-  }
-  return { success: false, error: 'Record not found' };
-}
-
-// ============================================================
-// 自動採番API
-// ============================================================
-
-/**
- * 次のIDを自動生成する内部関数
- * @param {string} sheetName - シート名
- * @returns {string} 次のID
- */
-function generateNextId_(sheetName) {
-  var config = ID_PREFIX[sheetName];
-  if (!config) throw new Error('No ID config for sheet: ' + sheetName);
-  
-  var ss = getSpreadsheet_();
-  var sheet = ss.getSheetByName(sheetName);
-  if (!sheet) throw new Error('Sheet not found: ' + sheetName);
-  
-  var data = sheet.getDataRange().getValues();
-  var headers = data[0];
-  var idColIdx = headers.indexOf(config.column);
-  if (idColIdx === -1) throw new Error('ID column not found: ' + config.column);
-  
-  var maxNum = 0;
-  var prefix = config.prefix + '-';
-  
-  for (var i = 1; i < data.length; i++) {
-    var id = String(data[i][idColIdx]);
-    if (id.indexOf(prefix) === 0) {
-      var numPart = parseInt(id.substring(prefix.length), 10);
-      if (!isNaN(numPart) && numPart > maxNum) {
-        maxNum = numPart;
-      }
     }
   }
   
-  var nextNum = maxNum + 1;
-  var padded = ('000' + nextNum).slice(-config.digits);
-  return prefix + padded;
+  // 2. 新しい詳細を追加
+  details.forEach((d, index) => {
+    const detailId = getNextId(SHEET_FACILITY.ROUTE_DETAILS, facilityId);
+    const row = headers.map(h => {
+      if (h === 'Route_Detail_ID') return detailId;
+      if (h === 'Route_ID') return routeId;
+      if (h === 'Sort_Order') return index + 1;
+      return d[h] || '';
+    });
+    sheet.appendRow(row);
+  });
+  
+  clearAllCache();
+  return { success: true };
 }
 
 /**
- * フロントエンド向け: 次のIDを取得
- * @param {string} sheetName - シート名
- * @returns {string} 次のID
+ * 物品の入出庫ログを記録し、在庫を更新する
  */
-function getNextId(sheetName) {
-  return generateNextId_(sheetName);
+function recordInventoryMove(itemType, item, changeType, quantity, staffId, facilityId) {
+  if (!item || !quantity) throw new Error('Item and Quantity required');
+  
+  // 1. ログを記録
+  const logData = {
+    Log_ID: getNextId(SHEET_FACILITY.INVENTORY_LOGS, facilityId),
+    Item_ID: item.Item_ID,
+    Type: changeType, // 入庫, 出庫, 棚卸
+    Quantity: quantity,
+    Staff_ID: staffId || '',
+    Log_Date: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss')
+  };
+  saveData(SHEET_FACILITY.INVENTORY_LOGS, logData, 'Log_ID', null, facilityId);
+  
+  // 2. 在庫を更新（M_Itemsに在庫列がある場合）
+  const sheetName = itemType === 'COMMON' ? SHEET_MASTER.ITEMS_COMMON : SHEET_FACILITY.ITEMS_FACILITY;
+  const dbType = itemType === 'COMMON' ? 'MASTER' : 'FACILITY';
+  const fId = itemType === 'COMMON' ? null : facilityId;
+  
+  const currentItems = getSheetDataCached_(sheetName, dbType, fId);
+  const targetItem = currentItems.find(i => i.Item_ID === item.Item_ID);
+  
+  if (targetItem && targetItem.Stock !== undefined) {
+    let newStock = Number(targetItem.Stock || 0);
+    if (changeType === '入庫') newStock += Number(quantity);
+    else if (changeType === '出庫') newStock -= Number(quantity);
+    else if (changeType === '棚卸') newStock = Number(quantity);
+    
+    saveData(sheetName, { Stock: newStock }, 'Item_ID', item.Item_ID, fId);
+  }
+  
+  return { success: true };
 }
 
-// ============================================================
-// 人事異動・昇進・applyStaffChange API
-// ============================================================
+function clearAllCache() {
+  const cache = CacheService.getScriptCache();
+  const keys = [
+    `V2_${SHEET_MASTER.ORGANIZATIONS}_MASTER`,
+    `V2_${SHEET_MASTER.STAFF}_MASTER`,
+    `V2_${SHEET_MASTER.QUALIFICATIONS}_MASTER`,
+    `V2_${SHEET_MASTER.CONTRACTS}_MASTER`,
+    `V2_${SHEET_MASTER.ITEMS_COMMON}_MASTER`
+  ];
+  const currentFac = CacheService.getUserCache().get('CURRENT_FACILITY_ID');
+  if (currentFac) {
+    keys.push(`V2_${SHEET_FACILITY.EQUIPMENT}_${currentFac}`);
+    keys.push(`V2_${SHEET_FACILITY.LOCATIONS}_${currentFac}`);
+    keys.push(`V2_${SHEET_FACILITY.INSPECTION_ROUTES}_${currentFac}`);
+    keys.push(`V2_${SHEET_FACILITY.ROUTE_DETAILS}_${currentFac}`);
+    keys.push(`V2_${SHEET_FACILITY.ITEMS_FACILITY}_${currentFac}`);
+  }
+  cache.removeAll(keys);
+}
 
-/**
- * 人事異動・昇進・昇格・任命を適用する
- * @param {Object} changeData - { staffId, changeType, changeDate, fieldChanged, oldValue, newValue, remarks }
- * @returns {Object} 結果
- */
-function applyStaffChange(changeData) {
+function getNextId(sheetName, facilityId) {
   try {
-    var changeId = generateNextId_(SHEET.STAFF_CHANGES);
-    
-    // 1. 履歴レコードを追加
-    var record = {
-      Change_ID: changeId,
-      Staff_ID: changeData.staffId,
-      Change_Type: changeData.changeType,
-      Change_Date: changeData.changeDate,
-      Field_Changed: changeData.fieldChanged,
-      Old_Value: changeData.oldValue,
-      New_Value: changeData.newValue,
-      Remarks: changeData.remarks || ''
-    };
-    appendRow_(SHEET.STAFF_CHANGES, record);
-    
-    // 2. M_Staff の該当フィールドを更新
-    var updateData = { Email: changeData.staffEmail };
-    updateData[changeData.fieldChanged] = changeData.newValue;
-    updateRow_(SHEET.STAFF, 'Email', changeData.staffEmail, updateData);
-    
-    // 3. キャッシュクリア
-    clearCache_(SHEET.STAFF);
-    clearCache_(SHEET.STAFF_CHANGES);
-    
-    return { success: true, changeId: changeId };
-  } catch (e) {
-    console.error('applyStaffChange error:', e);
-    return { success: false, error: e.toString() };
-  }
-}
-// ============================================================
-// システム可視化・ER図生成 API
-// ============================================================
-
-/**
- * 全シートのヘッダー情報を読み込み、Mermaid形式のER図テキストを生成する
- */
-/**
- * 全シートのヘッダー情報を読み込み、Mermaid形式のER図テキストを生成する (v3: 堅牢版)
- */
-function getSchemaDiagram() {
-  var ss = getSpreadsheet_();
-  if (!ss) return 'erDiagram\n  ERROR_NO_SS';
-  
-  var sheets = ss.getSheets();
-  var erText = 'erDiagram\n';
-  var schemaMap = {};
-  var tablePKs = {};
-  
-  // 1. 各シート定義 & カラム収集
-  sheets.forEach(function(sheet) {
-    var name = sheet.getName();
-    if (!name.match(/^[MT]_/)) return;
-    
-    // 英数字とアンダースコアのみに制限
-    var safeName = name.replace(/[^a-zA-Z0-9_]/g, '');
-    if (!safeName) return;
-
-    var lastCol = sheet.getLastColumn();
-    var headers = [];
-    if (sheet.getLastRow() > 0 && lastCol > 0) {
-      headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    const config = ID_PREFIX[sheetName];
+    if (!config) throw new Error('Auto-ID not configured for ' + sheetName);
+    const ss = getSpreadsheetBySheetName_(sheetName, facilityId);
+    const sheet = ss.getSheetByName(sheetName);
+    if (!sheet) return config.prefix + '-' + String(1).padStart(config.digits, '0');
+    const lastRow = sheet.getLastRow();
+    if (lastRow <= 1) return config.prefix + '-' + String(1).padStart(config.digits, '0');
+    const data = sheet.getDataRange().getValues();
+    const headers = data[0];
+    const colIdx = headers.indexOf(config.column);
+    if (colIdx === -1) return config.prefix + '-' + String(1).padStart(config.digits, '0');
+    let maxNum = 0;
+    for (let i = 1; i < data.length; i++) {
+      const val = String(data[i][colIdx]);
+      if (val.startsWith(config.prefix + '-')) {
+        const parts = val.split('-');
+        if (parts.length > 1) {
+          const num = parseInt(parts[1]);
+          if (!isNaN(num) && num > maxNum) maxNum = num;
+        }
+      }
     }
-    
-    // 重複除去と空文字排除
-    var cleanHeaders = [];
-    var seenH = {};
-    headers.forEach(function(h) {
-      if (h === "" || h === null || h === undefined) return;
-      var hStr = String(h).trim();
-      if (!seenH[hStr]) {
-        cleanHeaders.push(hStr);
-        seenH[hStr] = true;
-      }
-    });
-
-    schemaMap[safeName] = cleanHeaders;
-    
-    // テーブル定義出力
-    erText += '  ' + safeName + ' {\n';
-    cleanHeaders.forEach(function(h) {
-      var isPK = false;
-      var isFK = false;
-      
-      // PK推論
-      if (h.match(/_ID$/i)) {
-        var base = safeName.replace(/^[MT]_/, '').replace(/s$/, '').toLowerCase();
-        var hLower = h.toLowerCase();
-        if (hLower.indexOf(base) !== -1 || hLower === 'id') {
-          isPK = true;
-          tablePKs[safeName] = h; // このテーブルのPKとして記録
-        } else {
-          isFK = true;
-        }
-      }
-      
-      var type = 'string';
-      if (h.match(/Date|Time|Timestamp/i)) type = 'date';
-      if (h.match(/Count|Amount|Cost|Stock|Order|Quantity/i)) type = 'number';
-      
-      var keyMark = isPK ? ' PK' : (isFK ? ' FK' : '');
-      // カラム名に英数字以外が含まれる場合は引用符が必要だが、
-      // Mermaid erDiagramでは型定義内での引用符の扱いに癖があるため、極力記号を外す
-      var saferH = h.replace(/[^a-zA-Z0-9_]/g, '');
-      if (!saerH) saferH = 'col';
-      
-      erText += '    ' + type + ' ' + saferH + keyMark + '\n';
-    });
-    erText += '  }\n';
-  });
-  
-  // 2. リレーション推論
-  var drawnRels = {};
-  Object.keys(schemaMap).forEach(function(src) {
-    schemaMap[src].forEach(function(col) {
-      if (!col.match(/_ID$/i)) return;
-      
-      Object.keys(tablePKs).forEach(function(tgt) {
-        if (src === tgt) return;
-        if (col.toLowerCase() === tablePKs[tgt].toLowerCase()) {
-          var relKey = [src, tgt].sort().join('-');
-          if (!drawnRels[relKey]) {
-            // 線を引く ( src は FK を持つ側 -> 子 )
-            // tgt(親) ||--o{ src(子)
-            erText += '  ' + tgt + ' ||--o{ ' + src + ' : "via_' + col.replace(/[^a-zA-Z0-9_]/g, '') + '"\n';
-            drawnRels[relKey] = true;
-          }
-        }
-      });
-    });
-  });
-
-  return erText;
+    return config.prefix + '-' + String(maxNum + 1).padStart(config.digits, '0');
+  } catch (e) { throw new Error('採番エラー: ' + e.message); }
 }
+
+function ensureHeaders_(sheet, sheetName) {}
