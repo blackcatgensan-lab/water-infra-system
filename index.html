@@ -15,6 +15,8 @@
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Outlined" rel="stylesheet">
   <!-- Vue.js 3 CDN -->
   <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <!-- Mermaid.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 
   <style>
     /* ============================================================
@@ -710,6 +712,75 @@
       overflow: hidden;
       text-overflow: ellipsis;
     }
+
+    /* --- IT資産管理画面 専用レイアウト --- */
+
+    /* 1. 画面全体のラッパー：強制的に上詰めにする */
+    .it-assets-view-wrapper {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start !important;
+      /* 垂直方向：上詰め（絶対） */
+      align-items: stretch;
+      /* 水平方向：幅いっぱい */
+      padding: 24px;
+      margin: 0;
+      box-sizing: border-box;
+      max-width: 1400px;
+      margin-left: auto;
+      margin-right: auto;
+      overflow-y: hidden;
+      /* コンテナ自体はスクロールさせず、中身で制御 */
+    }
+
+    /* 2. タブ切り替えボタンのエリア（既存の .view-subtabs を補強） */
+    .inventory-tabs {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+      flex-shrink: 0;
+      /* 縮ませない */
+    }
+
+    /* 3. ネットワーク図のコンテナ */
+    .network-map-container {
+      flex-grow: 1;
+      /* 残りの高さをすべて使う */
+      width: 100%;
+      background: #ffffff;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      overflow: auto;
+      /* スクロールバー有効化 */
+
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start !important;
+      /* ここも上詰め */
+      align-items: center;
+      /* 図は左右中央 */
+      padding: 20px;
+      box-sizing: border-box;
+      min-height: 400px;
+      /* 最低限確保 */
+    }
+
+    /* 4. Mermaid図の強制サイズ制限（空白排除のキモ） */
+    #networkMap {
+      width: 100%;
+      margin: 0;
+      padding: 0;
+      line-height: 0;
+    }
+
+    #networkMap svg {
+      height: auto !important;
+      /* 高さを図の実寸に合わせる */
+      max-width: 100% !important;
+      /* 幅からはみ出させない */
+    }
   </style>
 </head>
 
@@ -743,6 +814,9 @@
         <div class="nav-item" :class="{active: currentView === 'qualifications'}"
           @click="currentView = 'qualifications'">
           <span class="material-icons-outlined">school</span> 資格管理
+        </div>
+        <div class="nav-item" :class="{active: currentView === 'it_assets'}" @click="currentView = 'it_assets'">
+          <span class="material-icons-outlined">devices</span> IT資産管理
         </div>
       </nav>
     </header>
@@ -1106,12 +1180,147 @@
       </div>
     </div>
 
+    <!-- VIEW: IT ASSETS -->
+    <div v-if="currentView === 'it_assets'" class="it-assets-view-wrapper">
+      <div class="dashboard-header">
+        <div class="dashboard-title">IT資産管理・ネットワーク構成</div>
+        <div>
+          <button class="btn-primary" v-if="itSubtab==='list'" @click="openItDeviceModal(true)">機器登録</button>
+          <button class="btn-primary" v-if="itSubtab==='soft'" @click="openItSoftwareModal(true)">ソフト登録</button>
+        </div>
+      </div>
+      <div class="view-subtabs inventory-tabs">
+        <div class="subtab-item" :class="{active: itSubtab === 'list'}" @click="switchItTab('list')">機器リスト</div>
+        <div class="subtab-item" :class="{active: itSubtab === 'soft'}" @click="switchItTab('soft')">ソフトウェア</div>
+        <div class="subtab-item" :class="{active: itSubtab === 'map'}" @click="switchItTab('map')">ネットワーク構成図</div>
+      </div>
+
+      <!-- Tab: Device List -->
+      <div v-if="itSubtab === 'list'" class="eq-grid">
+        <div v-for="d in itDevices" :key="d.Device_ID" class="eq-card" @click="openItDeviceModal(false, d)"
+          style="position:relative;">
+          <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
+            <div class="eq-card-name" style="font-size:15px;">{{ d.Name }}</div>
+            <span class="status-badge">{{ d.Type }}</span>
+          </div>
+          <div class="text-secondary" style="font-size:12px;">ID: {{ d.Device_ID }}</div>
+          <div class="text-secondary" style="font-size:12px;">
+            利用者: {{ d.User_Names || '(未設定)' }}
+          </div>
+          <div class="text-muted"
+            style="font-size:11px; margin-top:6px; border-top:1px solid var(--border-light); padding-top:6px;">
+            Soft: {{ getInstalledSoftNames(d.Device_ID) }}
+          </div>
+        </div>
+        <div v-if="itDevices.length===0" class="empty-state">機器データがありません</div>
+      </div>
+
+      <!-- Tab: Software List -->
+      <div v-if="itSubtab === 'soft'" class="info-card" style="padding:0;">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>ソフト名</th>
+              <th>Ver</th>
+              <th>期限</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="s in itSoftware" :key="s.Soft_ID">
+              <td style="font-weight:600;">{{ s.Name }}</td>
+              <td>{{ s.Version }}</td>
+              <td>{{ formatDate(s.Expiry_Date) }}</td>
+              <td><button class="btn-icon" @click="openItSoftwareModal(false, s)"><span
+                    class="material-icons-outlined">edit</span></button></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Tab: Network Map -->
+      <div v-if="itSubtab === 'map'" class="network-map-container">
+        <div v-if="itDevices.length === 0" style="color: red; font-weight: bold;">【重要】データが0件です。Code.gsからデータが届いていません。
+        </div>
+        <div v-else style="color: blue; font-size: 0.8em;">データ受信確認: {{ itDevices.length }} 台の機器</div>
+        <div id="networkMap"></div>
+      </div>
+    </div>
+
+    <!-- MODALS -->
+    <!-- Generic Edit Modal (Extended for IT Device) -->
     <div v-if="editModal.show" class="modal-overlay">
       <div class="modal-content" style="max-width:500px;">
         <button class="modal-close" @click="editModal.show = false"><span
             class="material-icons-outlined">close</span></button>
         <h2>{{ editModal.title }}</h2>
-        <form @submit.prevent="handleSaveGeneric" style="margin-top:20px;">
+
+        <!-- IT Device Specific Form -->
+        <div v-if="editModal.type === 'it_device'" style="margin-top:20px; max-height:60vh; overflow-y:auto;">
+          <div class="form-group">
+            <label class="form-label">機器ID (自動)</label>
+            <input type="text" v-model="editModal.data.Device_ID" class="form-input" readonly placeholder="(新規登録時自動採番)">
+          </div>
+          <div class="form-group">
+            <label class="form-label">機器名</label>
+            <input type="text" v-model="editModal.data.Name" class="form-input">
+          </div>
+          <div class="form-group">
+            <label class="form-label">所属組織 <span style="color:red">*</span></label>
+            <select v-model="editModal.data.Org_ID" class="form-input" required>
+              <option value="">-- 選択してください --</option>
+              <option v-for="o in organizations" :key="o.Org_ID" :value="o.Org_ID">
+                {{ o.Name }}
+              </option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">種別</label>
+            <select v-model="editModal.data.Type" class="form-input">
+              <option value="PC">PC</option>
+              <option value="タブレット">タブレット</option>
+              <option value="ルーター">ルーター</option>
+              <option value="ハブ">ハブ</option>
+              <option value="サーバー">サーバー</option>
+              <option value="プリンタ">プリンタ</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">親機 (アップストリーム)</label>
+            <select v-model="editModal.data.Upstream_Device_ID" class="form-input">
+              <option value="">(なし / 最上位)</option>
+              <option v-for="d in itDevices" :key="d.Device_ID" :value="d.Device_ID"
+                :disabled="d.Device_ID === editModal.data.Device_ID">
+                {{ d.Name }} ({{ d.Device_ID }})
+              </option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">管理者</label>
+            <input type="text" v-model="editModal.data.Admin_Name" class="form-input">
+          </div>
+          <div class="form-group">
+            <label class="form-label">利用者</label>
+            <input type="text" v-model="editModal.data.User_Names" class="form-input">
+          </div>
+          <div class="form-group" style="border-top:1px solid var(--border); padding-top:12px;">
+            <label class="form-label">インストール済みソフトウェア</label>
+            <div v-if="itSoftware.length === 0" class="text-muted">ソフトウェアマスタがありません</div>
+            <div v-else style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+              <label v-for="s in itSoftware" :key="s.Soft_ID" style="display:flex; align-items:center;">
+                <input type="checkbox" :value="s.Soft_ID" v-model="editModal.data._installed">
+                <span style="margin-left:4px; font-size:13px;">{{ s.Name }}</span>
+              </label>
+            </div>
+          </div>
+          <div style="display:flex; justify-content:flex-end; gap:12px; margin-top:24px;">
+            <button class="btn-outline" @click="editModal.show = false">キャンセル</button>
+            <button class="btn-primary" @click="saveItDevice" :disabled="editModal.saving">保存</button>
+          </div>
+        </div>
+
+        <!-- Generic Form (Fallback) -->
+        <form v-else @submit.prevent="handleSaveGeneric" style="margin-top:20px;">
           <div v-for="f in editModal.fields" :key="f.key" class="form-group">
             <label class="form-label">{{ f.label }}</label>
             <select v-if="f.type==='select'" v-model="editModal.data[f.key]" class="form-input">
@@ -1203,6 +1412,10 @@
         const inspectionRoutes = ref([]);
         const routeDetails = ref([]);
         const itemsFacility = ref([]);
+        const itDevices = ref([]);
+        const itSoftware = ref([]);
+        const itInstallations = ref([]);
+        const itSubtab = ref('list');
 
         // Tree State
         const treeNodes = ref([]);
@@ -1216,34 +1429,153 @@
         const logModal = ref({ show: false, item: {}, type: '入庫', quantity: 1 });
         const routeModal = ref({ show: false, route: {}, details: [], searchQuery: '', saving: false });
 
-        onMounted(() => { loadMasterData(); });
-
-        const loadMasterData = () => {
-          loading.value = true;
-          loadingMessage.value = 'データをロード中...';
+        // onMounted
+        Vue.onMounted(() => {
+          loadingMessage.value = 'マスタデータ読み込み中...';
           google.script.run.withSuccessHandler(data => {
             facilities.value = data.facilities;
             staff.value = data.staff;
             organizations.value = data.organizations;
             qualifications.value = data.qualifications;
             itemsCommon.value = data.itemsCommon;
+
+            // Phase 7: Load IT Assets (Global)
+            itDevices.value = data.itDevices || [];
+            itSoftware.value = data.itSoftware || [];
+            itInstallations.value = data.itInstallations || [];
+
             loading.value = false;
           }).getInitialData();
-        };
+        });
 
+        // Load Facility Data
         const loadFacilityData = () => {
           if (!selectedFacilityId.value) return;
           loading.value = true;
-          loadingMessage.value = '施設データを同期中...';
+          loadingMessage.value = '施設データ読み込み中...';
+
           google.script.run.withSuccessHandler(data => {
             equipment.value = data.equipment;
+            treeNodes.value = [];
             inspectionRoutes.value = data.inspectionRoutes;
             routeDetails.value = data.routeDetails || [];
             itemsFacility.value = data.items || [];
+
             buildTree(selectedFacilityId.value, equipment.value);
+
+            // IT Assets Network Map is global now, but re-render might be needed if filtered by facility?
+            // For now, IT assets are Org-based, so facility change doesn't strictly affect them unless we filter by facility's Org.
+            if (currentView.value === 'it_assets') renderNetworkMap();
+
             loading.value = false;
           }).getFacilityData(selectedFacilityId.value);
         };
+
+        // Network Map Logic (Bulletproof - Ultra Simple)
+        const renderNetworkMap = async () => {
+          const container = document.getElementById('networkMap');
+          if (!container) {
+            console.warn('Mermaid container not found');
+            return;
+          }
+
+          // データチェック
+          if (!itDevices.value || itDevices.value.length === 0) {
+            container.innerHTML = `
+              <div style="padding:60px; text-align:center; color:#94A3B8;">
+                <span class="material-icons-outlined" style="font-size:48px; opacity:0.3;">devices</span>
+                <div style="margin-top:12px; font-weight:500;">表示する機器データがありません</div>
+                <div style="font-size:12px; margin-top:4px;">IT資産を登録してください</div>
+              </div>`;
+            return;
+          }
+
+          // IDを完全にサニタイズ（英数字とアンダースコアのみ）
+          const cleanId = (id) => {
+            if (!id) return 'DEV_UNKNOWN';
+            return String(id).replace(/[^a-zA-Z0-9]/g, '_');
+          };
+
+          // ラベルを完全にサニタイズ（英数字とスペースのみ）
+          const cleanLabel = (text) => {
+            if (!text) return 'Unknown';
+            return String(text)
+              .replace(/[^a-zA-Z0-9\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF\s]/g, '')  // 日本語と英数字とスペースのみ
+              .replace(/\s+/g, ' ')
+              .trim()
+              .substring(0, 15);
+          };
+
+          // 最もシンプルなMermaid構文
+          let lines = ['flowchart TD'];
+
+          itDevices.value.forEach(device => {
+            const id = cleanId(device.Device_ID);
+            const name = cleanLabel(device.Name || device.Device_ID);
+            const type = cleanLabel(device.Type || '');
+
+            // 最もシンプルな矩形（1行ラベル）
+            const label = `${name} ${type}`.trim();
+            lines.push(`  ${id}["${label}"]`);
+
+            // エッジ
+            if (device.Upstream_Device_ID) {
+              const upId = cleanId(device.Upstream_Device_ID);
+              lines.push(`  ${upId} --> ${id}`);
+            }
+          });
+
+          // スタイル
+          lines.push('  classDef default fill:#E3F2FD,stroke:#1976D2,stroke-width:2px');
+
+          const graph = lines.join('\n');
+          console.log('Mermaid Graph:', graph);  // デバッグ用
+
+          container.innerHTML = `<div class="mermaid">${graph}</div>`;
+
+          try {
+            if (typeof mermaid !== 'undefined') {
+              mermaid.initialize({
+                startOnLoad: false,
+                theme: 'base',
+                themeVariables: {
+                  fontSize: '14px'
+                },
+                flowchart: {
+                  useMaxWidth: true,
+                  htmlLabels: false,
+                  curve: 'linear'
+                }
+              });
+              await mermaid.run({ nodes: container.querySelectorAll('.mermaid') });
+            }
+          } catch (error) {
+            console.error('Mermaid error:', error);
+            container.innerHTML = `
+              <div style="color:#EF5350; padding:40px; text-align:center; background:#FFF5F5; border-radius:8px;">
+                <span class="material-icons-outlined" style="font-size:48px;">error_outline</span>
+                <div style="margin-top:16px; font-weight:600;">描画エラー</div>
+                <div style="font-size:12px; margin-top:8px; color:#666;">${error.message}</div>
+                <div style="margin-top:12px; font-size:11px; color:#999;">コンソールで詳細を確認してください</div>
+              </div>`;
+          }
+        };
+
+        const switchItTab = (tab) => {
+          itSubtab.value = tab;
+          if (tab === 'map') {
+            Vue.nextTick(() => {
+              setTimeout(() => { renderNetworkMap(); }, 100);
+            });
+          }
+        };
+
+        // Watch view change to render map
+        Vue.watch(currentView, (newView) => {
+          if (newView === 'it_assets' && itSubtab.value === 'map') {
+            setTimeout(() => { renderNetworkMap(); }, 100);
+          }
+        });
 
         // Tree Logic
         const buildTree = (facilityId, eqList) => {
@@ -1386,6 +1718,77 @@
           };
         };
 
+        const getInstalledSoftNames = (deviceId) => {
+          const log = itInstallations.value.filter(i => String(i.Device_ID) === String(deviceId));
+          if (!log.length) return 'なし';
+          return log.map(l => {
+            const s = itSoftware.value.find(sf => String(sf.Soft_ID) === String(l.Soft_ID));
+            return s ? s.Name : l.Soft_ID;
+          }).join(', ');
+        };
+
+        const openItDeviceModal = (isNew, d = {}) => {
+          const installed = itInstallations.value.filter(i => String(i.Device_ID) === String(d.Device_ID)).map(i => i.Soft_ID);
+          editModal.value = {
+            show: true, title: isNew ? 'IT機器登録' : 'IT機器編集', type: 'it_device',
+            sheet: 'M_IT_Devices', idColumn: 'Device_ID',
+            fields: [
+              { key: 'Device_ID', label: '機器ID', readonly: !isNew },
+              { key: 'Name', label: '機器名' },
+              { key: 'Type', label: '種別', type: 'select', options: ['PC', 'サーバー', 'ルーター', 'ハブ', 'プリンタ', 'タブレット', 'スマートフォン', 'その他'] },
+              { key: 'Manufacturer', label: 'メーカー' },
+              { key: 'Model', label: 'モデル' },
+              { key: 'Serial_Number', label: 'シリアル番号' },
+              { key: 'IP_Address', label: 'IPアドレス' },
+              { key: 'MAC_Address', label: 'MACアドレス' },
+              { key: 'Purchase_Date', label: '購入日', type: 'date' },
+              { key: 'Warranty_Expiry_Date', label: '保証期限', type: 'date' },
+              { key: 'Upstream_Device_ID', label: '上位接続機器ID', type: 'select', options: itDevices.value.map(dev => ({ label: `${dev.Name} (${dev.Device_ID})`, value: dev.Device_ID })).concat([{ label: '(なし)', value: '' }]) },
+              { key: 'Org_ID', label: '所属組織', type: 'select', options: organizations.value.map(o => ({ label: o.Name, value: o.Org_ID })) },
+              { key: 'Location', label: '設置場所' },
+              { key: 'Remarks', label: '備考', type: 'textarea' }
+            ],
+            data: { ...d, _installed: installed }, // _installed property for checkboxes
+            saving: false
+          };
+        };
+
+        const openItSoftwareModal = (isNew, s = {}) => {
+          editModal.value = {
+            show: true, title: isNew ? 'ソフトウェア登録' : 'ソフトウェア編集', sheet: 'M_IT_Software', idColumn: 'Soft_ID',
+            fields: [
+              { key: 'Name', label: 'ソフトウェア名' },
+              { key: 'Version', label: 'バージョン' },
+              { key: 'License_Key', label: 'ライセンスキー' },
+              { key: 'Expiry_Date', label: '有効期限', type: 'date' }
+            ],
+            data: { ...s }
+          };
+        };
+
+        const saveItDevice = () => {
+          const m = editModal.value;
+          m.saving = true;
+          // Extract software IDs
+          const softIds = m.data._installed || [];
+          const deviceData = { ...m.data };
+          delete deviceData._installed;
+
+          // Org_ID check
+          if (!deviceData.Org_ID) {
+            alert('所属組織を選択してください');
+            m.saving = false;
+            return;
+          }
+
+          google.script.run.withSuccessHandler(() => {
+            m.show = false;
+            // Reload Master Data to refresh IT assets
+            // In a perfect world we'd just refresh IT assets, but reloading master is safer
+            location.reload();
+          }).saveITDeviceAndInstallations(deviceData, softIds, deviceData.Org_ID);
+        };
+
         return {
           loading, loadingMessage, currentView, facilities, staff, organizations, qualifications, selectedFacilityId, equipment, inspectionRoutes, routeDetails,
           inventorySubtab, currentItemsDisplay, filteredEquipmentForRoute, editModal, logModal, routeModal,
@@ -1394,7 +1797,10 @@
           onSelectNode, onToggleNode, refreshTree, selectEquipment,
           handleSaveGeneric, openStaffModal, openItemEditorModal, openInventoryLogModal, saveInventoryLog,
           openRouteEditorModal, addToRoute, moveRouteItem, saveRoute,
-          openOrgModal, openQualModal
+          openOrgModal, openQualModal,
+          itDevices, itSoftware, itInstallations, itSubtab,
+          getInstalledSoftNames, openItDeviceModal, openItSoftwareModal, saveItDevice,
+          switchItTab
         };
       }
     }).mount('#app');

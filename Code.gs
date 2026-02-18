@@ -28,7 +28,10 @@ const SHEET_MASTER = {
   QUALIFICATIONS:      'M_Qualifications',
   QUAL_APPLICATIONS:   'T_Qual_Applications',
   STAFF_CHANGES:       'T_Staff_Changes',
-  ITEMS_COMMON:        'M_Items_Common'
+  ITEMS_COMMON:        'M_Items_Common',
+  IT_DEVICES:          'M_IT_Devices',
+  IT_SOFTWARE:         'M_IT_Software',
+  IT_INSTALLATIONS:    'T_IT_Installations'
 };
 
 const SHEET_FACILITY = {
@@ -44,11 +47,11 @@ const SHEET_FACILITY = {
   ROUTE_DETAILS:       'M_Route_Details'
 };
 
-const SHEET = Object.assign({}, SHEET_MASTER, SHEET_FACILITY);
-
 const SHEET_DB_MAP = {};
 Object.keys(SHEET_MASTER).forEach(key => SHEET_DB_MAP[SHEET_MASTER[key]] = 'MASTER');
 Object.keys(SHEET_FACILITY).forEach(key => SHEET_DB_MAP[SHEET_FACILITY[key]] = 'FACILITY');
+
+const SHEET = Object.assign({}, SHEET_MASTER, SHEET_FACILITY);
 
 // ============================================================
 // 自動採番用プレフィックスマッピング
@@ -71,7 +74,10 @@ const ID_PREFIX = {
   'T_Staff_Changes':        { column: 'Change_ID',        prefix: 'CHG',  digits: 3, db: 'MASTER' },
   'T_Inspection_Results':   { column: 'Result_ID',        prefix: 'IR',   digits: 5, db: 'FACILITY' },
   'T_Construction_History': { column: 'Construction_ID',  prefix: 'C',    digits: 3, db: 'FACILITY' },
-  'T_Inventory_Logs':       { column: 'Log_ID',           prefix: 'LOG',  digits: 3, db: 'FACILITY' }
+  'T_Inventory_Logs':       { column: 'Log_ID',           prefix: 'LOG',  digits: 3, db: 'FACILITY' },
+  'M_IT_Devices':           { column: 'Device_ID',        prefix: 'DEV',  digits: 3, db: 'MASTER' },
+  'M_IT_Software':          { column: 'Soft_ID',          prefix: 'SOFT', digits: 3, db: 'MASTER' },
+  'T_IT_Installations':     { column: 'Install_ID',       prefix: 'INST', digits: 5, db: 'MASTER' }
 };
 
 // ============================================================
@@ -99,7 +105,10 @@ function getInitialData() {
       qualifications: getSheetDataCached_(SHEET_MASTER.QUALIFICATIONS, 'MASTER') || [],
       qualApplications: getSheetDataCached_(SHEET_MASTER.QUAL_APPLICATIONS, 'MASTER') || [],
       staffChanges: getSheetDataCached_(SHEET_MASTER.STAFF_CHANGES, 'MASTER') || [],
-      itemsCommon: getSheetDataCached_(SHEET_MASTER.ITEMS_COMMON, 'MASTER') || []
+      itemsCommon: getSheetDataCached_(SHEET_MASTER.ITEMS_COMMON, 'MASTER') || [],
+      itDevices: getSheetDataCached_(SHEET_MASTER.IT_DEVICES, 'MASTER') || [],
+      itSoftware: getSheetDataCached_(SHEET_MASTER.IT_SOFTWARE, 'MASTER') || [],
+      itInstallations: getSheetDataCached_(SHEET_MASTER.IT_INSTALLATIONS, 'MASTER') || []
     };
   } catch (e) {
     Logger.log('getInitialData Error: ' + e.message);
@@ -390,8 +399,59 @@ function clearAllCache() {
     keys.push(`V2_${SHEET_FACILITY.INSPECTION_ROUTES}_${currentFac}`);
     keys.push(`V2_${SHEET_FACILITY.ROUTE_DETAILS}_${currentFac}`);
     keys.push(`V2_${SHEET_FACILITY.ITEMS_FACILITY}_${currentFac}`);
+    keys.push(`V2_${SHEET_FACILITY.INVENTORY_LOGS}_${currentFac}`);
+    keys.push(`V2_${SHEET_FACILITY.IT_DEVICES}_${currentFac}`);
+    keys.push(`V2_${SHEET_FACILITY.IT_SOFTWARE}_${currentFac}`);
+    keys.push(`V2_${SHEET_FACILITY.IT_INSTALLATIONS}_${currentFac}`);
   }
   cache.removeAll(keys);
+}
+
+function saveITDeviceAndInstallations(device, softwareIds, facilityId) {
+  if (!device || !facilityId) throw new Error('Invalid arguments');
+
+  // 1. Save Device
+  const res = saveData(SHEET_FACILITY.IT_DEVICES, device, 'Device_ID', device.Device_ID, facilityId);
+  const deviceId = res.id;
+
+  // 2. Update Installations (Delete old -> Insert new)
+  const ss = openFacilityDB(facilityId);
+  const sheet = ss.getSheetByName(SHEET_FACILITY.IT_INSTALLATIONS);
+  if (sheet) {
+    const data = sheet.getDataRange().getValues();
+    const headers = data.length > 0 ? data[0] : [];
+    
+    // ヘッダーがある場合のみ処理
+    if (headers.length > 0) {
+      // Delete existing
+      const devIdIdx = headers.indexOf('Device_ID');
+      if (devIdIdx !== -1) {
+        // data.length - 1 down to 1 (skip header)
+        for (let i = data.length - 1; i >= 1; i--) {
+          if (String(data[i][devIdIdx]) === String(deviceId)) {
+            sheet.deleteRow(i + 1);
+          }
+        }
+      }
+      
+      // Insert new
+      if (softwareIds && softwareIds.length > 0) {
+        softwareIds.forEach(softId => {
+          const installId = getNextId(SHEET_FACILITY.IT_INSTALLATIONS, facilityId);
+          const row = headers.map(h => {
+             if (h === 'Install_ID') return installId;
+             if (h === 'Device_ID') return deviceId;
+             if (h === 'Soft_ID') return softId;
+             return '';
+          });
+          sheet.appendRow(row);
+        });
+      }
+    }
+  }
+  
+  clearAllCache();
+  return { success: true, id: deviceId };
 }
 
 function getNextId(sheetName, facilityId) {
